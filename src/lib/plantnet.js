@@ -9,7 +9,9 @@ import { normalizeImageForPlantNet } from './imageNormalize'
 export const PLANTNET_ORGANS = ['auto', 'leaf', 'bark', 'flower', 'fruit', 'habit', 'other']
 
 const BACKEND_UNAVAILABLE =
-  "Species ID backend is not running. Use `vercel dev` locally or deploy to Vercel."
+  'Species ID backend is not running. Use `vercel dev` locally or deploy to Vercel.'
+const MISSING_API_KEY =
+  'Species ID server is running, but PLANTNET_API_KEY is missing in Vercel environment variables.'
 
 function isHeic(file) {
   return (
@@ -77,7 +79,7 @@ export async function identifyWithPlantNet({ photos = [], organHint = 'auto' }) 
   try {
     res = await fetch('/api/plantnet-identify', { method: 'POST', body: form })
   } catch {
-    // Network error — likely `npm run dev` without `vercel dev`
+    // Network error — route unreachable, likely `npm run dev` without `vercel dev`
     return {
       provider: 'plantnet', enabled: false,
       common_name: 'Unknown tree', scientific_name: null, confidence: 0,
@@ -85,21 +87,32 @@ export async function identifyWithPlantNet({ photos = [], organHint = 'auto' }) 
     }
   }
 
-  // 404 = vercel dev not running; 503 = key not configured server-side
-  if (res.status === 404 || res.status === 503) {
+  // 404 means the serverless route is not deployed at all
+  if (res.status === 404) {
     return {
       provider: 'plantnet', enabled: false,
       common_name: 'Unknown tree', scientific_name: null, confidence: 0,
       candidates: [], notes: [BACKEND_UNAVAILABLE], raw: null,
     }
   }
+
+  // Parse body once — used for both error and success paths
+  const raw = await res.json().catch(() => ({}))
 
   if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`Pl@ntNet proxy ${res.status}: ${text || res.statusText}`)
+    // 500 with explicit missing-key marker
+    if (res.status === 500 && raw?.error?.includes('Missing PLANTNET_API_KEY')) {
+      return {
+        provider: 'plantnet', enabled: false,
+        common_name: 'Unknown tree', scientific_name: null, confidence: 0,
+        candidates: [], notes: [MISSING_API_KEY], raw,
+      }
+    }
+    // Any other server error — surface the actual message from JSON
+    const msg = raw?.error ?? `Pl@ntNet proxy error ${res.status}: ${res.statusText}`
+    throw new Error(msg)
   }
 
-  const raw     = await res.json()
   const results = raw.results ?? []
 
   if (results.length === 0) {

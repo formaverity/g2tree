@@ -23,15 +23,27 @@ export const config = {
 }
 
 export default async function handler(req, res) {
+  console.log('[plantnet-identify] method:', req.method)
+
+  if (req.method === 'GET') {
+    return res.status(200).json({
+      ok: true,
+      route: '/api/plantnet-identify',
+      hasApiKey: Boolean(process.env.PLANTNET_API_KEY),
+    })
+  }
+
   if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST')
+    res.setHeader('Allow', 'GET, POST')
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
   const apiKey = process.env.PLANTNET_API_KEY
+  console.log('[plantnet-identify] hasApiKey:', Boolean(apiKey))
   if (!apiKey) {
-    return res.status(503).json({
-      error: 'PLANTNET_API_KEY is not configured. Set it in .env.local or your Vercel project environment variables.',
+    return res.status(500).json({
+      ok: false,
+      error: 'Missing PLANTNET_API_KEY on server.',
     })
   }
 
@@ -50,6 +62,9 @@ export default async function handler(req, res) {
   if (body.length === 0) {
     return res.status(400).json({ error: 'Empty request body' })
   }
+
+  const fileCount = (body.toString('latin1').match(/name="images"/g) ?? []).length
+  console.log('[plantnet-identify] incoming files:', fileCount)
 
   const url =
     `https://my-api.plantnet.org/v2/identify/all` +
