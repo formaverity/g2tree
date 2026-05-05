@@ -4,28 +4,55 @@ import { ArrowLeft, Copy, Download, Box, Send } from 'lucide-react'
 import useTreeSession from '../state/useTreeSession'
 import { buildTreeModelParams } from '../lib/treeModelParams'
 
-function buildExportPayload({ photos, landmarks, estimates, scaleRealWorldDist }) {
+function buildExportPayload({
+  photos, landmarks, estimates, scaleRealWorldDist,
+  userHints, treeStructureHints, speciesAIResult,
+  structureDetectionResult, previewMode,
+}) {
   return {
-    schema: 'g2tree/v1',
+    schema: 'g2tree/v2',
     exported_at: new Date().toISOString(),
     metadata: {
       photo_count: photos.length,
-      gps: photos[0]?.exif?.gps ?? null,
-      datetime: photos[0]?.exif?.datetime ?? null,
-      camera: photos[0]?.exif?.camera ?? null,
+      gps:      photos[0]?.exif?.gps      ?? null,
+      datetime: photos[0]?.exif?.datetime  ?? null,
+      camera:   photos[0]?.exif?.camera    ?? null,
       scale_real_world_dist_m: scaleRealWorldDist,
     },
+    user_hints: userHints,
+    tree_structure_hints: treeStructureHints,
     landmarks,
     estimates,
-    procedural_params: buildTreeModelParams(estimates),
+    species_identification: speciesAIResult ? {
+      provider:        speciesAIResult.provider,
+      common_name:     speciesAIResult.common_name,
+      scientific_name: speciesAIResult.scientific_name,
+      confidence:      speciesAIResult.confidence,
+      candidates:      speciesAIResult.candidates,
+      notes:           speciesAIResult.notes,
+    } : null,
+    structure_detection:       structureDetectionResult,
+    image_normalization_notes: speciesAIResult?.notes?.filter((n) => n.includes('Converted')) ?? [],
+    procedural_params:         buildTreeModelParams(estimates, treeStructureHints),
+    procedural_complexity_mode: previewMode,
   }
 }
 
 export default function ExportPanel() {
-  const { photos, landmarks, estimates, scaleRealWorldDist, setStep } = useTreeSession()
+  const {
+    photos, landmarks, estimates, scaleRealWorldDist,
+    userHints, treeStructureHints, speciesAIResult,
+    structureDetectionResult, previewMode,
+    setStep,
+  } = useTreeSession()
+
   const [copied, setCopied] = useState(false)
 
-  const payload = buildExportPayload({ photos, landmarks, estimates, scaleRealWorldDist })
+  const payload = buildExportPayload({
+    photos, landmarks, estimates, scaleRealWorldDist,
+    userHints, treeStructureHints, speciesAIResult,
+    structureDetectionResult, previewMode,
+  })
   const json = JSON.stringify(payload, null, 2)
 
   function handleCopy() {
@@ -37,9 +64,9 @@ export default function ExportPanel() {
 
   function handleDownload() {
     const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
     a.download = `g2tree_${Date.now()}.json`
     a.click()
     URL.revokeObjectURL(url)

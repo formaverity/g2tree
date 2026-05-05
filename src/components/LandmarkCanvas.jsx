@@ -3,20 +3,27 @@ import { motion } from 'framer-motion'
 import { ArrowRight, ArrowLeft, Ruler } from 'lucide-react'
 import useTreeSession from '../state/useTreeSession'
 
+// Groups: trunk (green), dbh (orange), canopy (teal), scale (amber)
 const LANDMARK_CONFIG = [
-  { key: 'trunk_base', label: 'Trunk Base', color: '#a8d8a8' },
-  { key: 'trunk_top', label: 'Trunk Top', color: '#a8d8a8' },
-  { key: 'canopy_left', label: 'Canopy Left', color: '#7ec8a4' },
-  { key: 'canopy_right', label: 'Canopy Right', color: '#7ec8a4' },
-  { key: 'scale_a', label: 'Scale A', color: '#d4b896' },
-  { key: 'scale_b', label: 'Scale B', color: '#d4b896' },
+  { key: 'trunk_base',   label: 'Trunk Base',   color: '#a8d8a8', group: 'trunk'  },
+  { key: 'trunk_top',    label: 'Trunk Top',    color: '#a8d8a8', group: 'trunk'  },
+  { key: 'dbh_left',     label: 'DBH Left',     color: '#e8a87c', group: 'dbh'   },
+  { key: 'dbh_right',    label: 'DBH Right',    color: '#e8a87c', group: 'dbh'   },
+  { key: 'canopy_left',  label: 'Canopy Left',  color: '#7ec8a4', group: 'canopy' },
+  { key: 'canopy_right', label: 'Canopy Right', color: '#7ec8a4', group: 'canopy' },
+  { key: 'scale_a',      label: 'Scale A',      color: '#d4b896', group: 'scale' },
+  { key: 'scale_b',      label: 'Scale B',      color: '#d4b896', group: 'scale' },
 ]
 
 const POINT_RADIUS = 14
 
 export default function LandmarkCanvas() {
-  const { photos, landmarks, setLandmark, showScaleRef, toggleScaleRef,
-          scaleRealWorldDist, setScaleRealWorldDist, setStep } = useTreeSession()
+  const {
+    photos, landmarks, setLandmark,
+    showScaleRef, toggleScaleRef,
+    scaleRealWorldDist, setScaleRealWorldDist,
+    setStep,
+  } = useTreeSession()
 
   const containerRef = useRef()
   const imgRef = useRef()
@@ -26,13 +33,13 @@ export default function LandmarkCanvas() {
 
   const calibPhoto = photos[0]
 
-  // Track rendered image bounds
+  function measure() {
+    if (!imgRef.current) return
+    const r = imgRef.current.getBoundingClientRect()
+    setImgRect({ x: r.left, y: r.top, w: r.width, h: r.height })
+  }
+
   useEffect(() => {
-    function measure() {
-      if (!imgRef.current) return
-      const r = imgRef.current.getBoundingClientRect()
-      setImgRect({ x: r.left, y: r.top, w: r.width, h: r.height })
-    }
     measure()
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
@@ -49,7 +56,6 @@ export default function LandmarkCanvas() {
     return { x: norm.x * rect.w, y: norm.y * rect.h }
   }
 
-  // Mouse events
   function onMouseDown(e, key) {
     e.preventDefault()
     setDragging(key)
@@ -63,7 +69,6 @@ export default function LandmarkCanvas() {
 
   const onMouseUp = useCallback(() => setDragging(null), [])
 
-  // Touch events
   function onTouchStart(e, key) {
     setDragging(key)
     setSelected(key)
@@ -90,9 +95,9 @@ export default function LandmarkCanvas() {
     }
   }, [onMouseMove, onMouseUp, onTouchMove, onTouchEnd])
 
-  const visibleLandmarks = showScaleRef
-    ? LANDMARK_CONFIG
-    : LANDMARK_CONFIG.filter((l) => !l.key.startsWith('scale_'))
+  const visibleLandmarks = LANDMARK_CONFIG.filter(
+    (l) => l.group !== 'scale' || showScaleRef
+  )
 
   return (
     <motion.div
@@ -118,6 +123,14 @@ export default function LandmarkCanvas() {
           ))}
         </div>
 
+        {/* DBH-specific instruction */}
+        <div className="dbh-instruction">
+          <span className="dbh-instruction-dot" />
+          Place <strong>DBH Left</strong> and <strong>DBH Right</strong> on the left and right
+          trunk edges at approximately breast height (~4.5ft / 1.4m from ground).
+          If photographed from the base looking up, use the clearest visible trunk width.
+        </div>
+
         <div className="landmark-img-container" ref={containerRef}>
           {calibPhoto ? (
             <>
@@ -126,26 +139,37 @@ export default function LandmarkCanvas() {
                 src={calibPhoto.url}
                 alt="calibration"
                 className="landmark-img"
-                onLoad={() => {
-                  if (!imgRef.current) return
-                  const r = imgRef.current.getBoundingClientRect()
-                  setImgRect({ x: r.left, y: r.top, w: r.width, h: r.height })
-                }}
+                onLoad={measure}
                 draggable={false}
               />
               {imgRect && (
-                <svg className="landmark-svg" style={{ left: 0, top: 0 }}>
-                  {/* Lines: trunk */}
-                  <LandmarkLine a={landmarks.trunk_base} b={landmarks.trunk_top} rect={imgRect} color="#a8d8a880" />
-                  {/* Lines: canopy */}
-                  <LandmarkLine a={landmarks.canopy_left} b={landmarks.canopy_right} rect={imgRect} color="#7ec8a440" />
-                  {/* Scale line */}
+                <svg className="landmark-svg">
+                  {/* Trunk axis line */}
+                  <LandmarkLine
+                    a={landmarks.trunk_base} b={landmarks.trunk_top}
+                    rect={imgRect} color="#a8d8a860"
+                  />
+                  {/* Canopy span */}
+                  <LandmarkLine
+                    a={landmarks.canopy_left} b={landmarks.canopy_right}
+                    rect={imgRect} color="#7ec8a440"
+                  />
+                  {/* DBH span — always shown */}
+                  <LandmarkLine
+                    a={landmarks.dbh_left} b={landmarks.dbh_right}
+                    rect={imgRect} color="#e8a87c80"
+                  />
+                  {/* Scale reference */}
                   {showScaleRef && (
-                    <LandmarkLine a={landmarks.scale_a} b={landmarks.scale_b} rect={imgRect} color="#d4b89660" dashed />
+                    <LandmarkLine
+                      a={landmarks.scale_a} b={landmarks.scale_b}
+                      rect={imgRect} color="#d4b89660" dashed
+                    />
                   )}
 
                   {visibleLandmarks.map((lm) => {
                     const px = toPixel(landmarks[lm.key], imgRect)
+                    const isActive = selected === lm.key
                     return (
                       <g
                         key={lm.key}
@@ -154,8 +178,26 @@ export default function LandmarkCanvas() {
                         onTouchStart={(e) => onTouchStart(e, lm.key)}
                         style={{ cursor: 'grab' }}
                       >
-                        <circle r={POINT_RADIUS} fill={lm.color} fillOpacity={selected === lm.key ? 0.9 : 0.6} stroke="#fff" strokeWidth={2} />
+                        <circle
+                          r={POINT_RADIUS}
+                          fill={lm.color}
+                          fillOpacity={isActive ? 0.9 : 0.6}
+                          stroke="#fff"
+                          strokeWidth={2}
+                        />
                         <circle r={4} fill="#fff" />
+                        {isActive && (
+                          <text
+                            y={-POINT_RADIUS - 4}
+                            textAnchor="middle"
+                            fill="#fff"
+                            fontSize="10"
+                            fontWeight="600"
+                            style={{ pointerEvents: 'none', userSelect: 'none' }}
+                          >
+                            {lm.label}
+                          </text>
+                        )}
                       </g>
                     )
                   })}
@@ -168,7 +210,10 @@ export default function LandmarkCanvas() {
         </div>
 
         <div className="scale-row">
-          <button className={`btn-icon ${showScaleRef ? 'active' : ''}`} onClick={toggleScaleRef}>
+          <button
+            className={`btn-icon ${showScaleRef ? 'active' : ''}`}
+            onClick={toggleScaleRef}
+          >
             <Ruler size={16} /> Scale Reference
           </button>
           {showScaleRef && (
@@ -201,13 +246,10 @@ export default function LandmarkCanvas() {
 }
 
 function LandmarkLine({ a, b, rect, color, dashed }) {
-  const ax = a.x * rect.w
-  const ay = a.y * rect.h
-  const bx = b.x * rect.w
-  const by = b.y * rect.h
   return (
     <line
-      x1={ax} y1={ay} x2={bx} y2={by}
+      x1={a.x * rect.w} y1={a.y * rect.h}
+      x2={b.x * rect.w} y2={b.y * rect.h}
       stroke={color}
       strokeWidth={2}
       strokeDasharray={dashed ? '6 4' : undefined}
