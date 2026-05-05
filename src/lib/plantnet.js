@@ -12,6 +12,10 @@ const BACKEND_UNAVAILABLE =
   'Species ID backend is not running. Use `vercel dev` locally or deploy to Vercel.'
 const MISSING_API_KEY =
   'Species ID server is running, but PLANTNET_API_KEY is missing in Vercel environment variables.'
+const PAYLOAD_TOO_LARGE =
+  'The image upload was still too large for the Vercel function. Try one photo, closer crop, or lower image size.'
+
+const MAX_TOTAL_BYTES = 3_800_000
 
 function isHeic(file) {
   return (
@@ -47,31 +51,58 @@ export async function identifyWithPlantNet({ photos = [], organHint = 'auto' }) 
       common_name: 'Unknown tree', scientific_name: null, confidence: 0,
       candidates: [],
       notes: ['HEIC is not currently supported by Pl@ntNet. Please use browser camera capture or convert to JPG/PNG.'],
+      normStats: null,
       raw: null,
     }
   }
 
-  // Normalize: WEBP → JPEG; JPEG/PNG pass through unchanged
-  const normResults     = await Promise.all(otherFiles.map(normalizeImageForPlantNet))
-  const conversionNotes = normResults.flatMap((r) => r.notes)
-  const validFiles      = normResults.filter((r) => r.file && !r.error).map((r) => r.file)
+  // Normalize all images: resize to 1280px longest edge + compress to JPEG
+  const normResults = await Promise.all(otherFiles.map((f) => normalizeImageForPlantNet(f)))
+  const allNotes    = normResults.flatMap((r) => r.notes)
+  const validNorms  = normResults.filter((r) => r.file && !r.error)
 
-  if (validFiles.length === 0) {
+  if (validNorms.length === 0) {
     return {
       provider: 'plantnet', enabled: true,
       common_name: 'Unknown tree', scientific_name: null, confidence: 0,
       candidates: [],
       notes: [
-        ...conversionNotes,
+        ...allNotes,
         'No supported images available. Pl@ntNet accepts JPG and PNG (WEBP is converted automatically).',
       ],
+      normStats: null,
       raw: null,
     }
   }
 
+  // Trim to stay under MAX_TOTAL_BYTES — keep first 1–3 images that fit
+  const kept = []
+  let runningBytes = 0
+  for (const norm of validNorms) {
+    if (runningBytes + norm.outputBytes > MAX_TOTAL_BYTES) break
+    kept.push(norm)
+    runningBytes += norm.outputBytes
+    if (kept.length >= 3) break
+  }
+
+  const skippedCount = validNorms.length - kept.length
+  const finalNotes   = [...allNotes]
+  if (skippedCount > 0) {
+    finalNotes.push(
+      `${skippedCount} image${skippedCount > 1 ? 's' : ''} skipped to stay under the Vercel 4.5 MB payload limit.`
+    )
+  }
+
+  const normStats = {
+    sentCount:          kept.length,
+    skippedCount,
+    totalOriginalBytes: kept.reduce((s, r) => s + r.originalBytes, 0),
+    totalOutputBytes:   kept.reduce((s, r) => s + r.outputBytes,   0),
+  }
+
   const form = new FormData()
-  validFiles.forEach((f) => {
-    form.append('images', f)
+  kept.forEach(({ file }) => {
+    form.append('images', file)
     form.append('organs', organHint)
   })
 
@@ -79,36 +110,35 @@ export async function identifyWithPlantNet({ photos = [], organHint = 'auto' }) 
   try {
     res = await fetch('/api/plantnet-identify', { method: 'POST', body: form })
   } catch {
-    // Network error — route unreachable, likely `npm run dev` without `vercel dev`
     return {
       provider: 'plantnet', enabled: false,
       common_name: 'Unknown tree', scientific_name: null, confidence: 0,
-      candidates: [], notes: [BACKEND_UNAVAILABLE], raw: null,
+      candidates: [], notes: [BACKEND_UNAVAILABLE], normStats, raw: null,
     }
   }
 
-  // 404 means the serverless route is not deployed at all
   if (res.status === 404) {
     return {
       provider: 'plantnet', enabled: false,
       common_name: 'Unknown tree', scientific_name: null, confidence: 0,
-      candidates: [], notes: [BACKEND_UNAVAILABLE], raw: null,
+      candidates: [], notes: [BACKEND_UNAVAILABLE], normStats, raw: null,
     }
   }
 
-  // Parse body once — used for both error and success paths
+  if (res.status === 413) {
+    throw new Error(PAYLOAD_TOO_LARGE)
+  }
+
   const raw = await res.json().catch(() => ({}))
 
   if (!res.ok) {
-    // 500 with explicit missing-key marker
     if (res.status === 500 && raw?.error?.includes('Missing PLANTNET_API_KEY')) {
       return {
         provider: 'plantnet', enabled: false,
         common_name: 'Unknown tree', scientific_name: null, confidence: 0,
-        candidates: [], notes: [MISSING_API_KEY], raw,
+        candidates: [], notes: [MISSING_API_KEY], normStats, raw,
       }
     }
-    // Any other server error — surface the actual message from JSON
     const msg = raw?.error ?? `Pl@ntNet proxy error ${res.status}: ${res.statusText}`
     throw new Error(msg)
   }
@@ -120,7 +150,8 @@ export async function identifyWithPlantNet({ photos = [], organHint = 'auto' }) 
       provider: 'plantnet', enabled: true,
       common_name: 'Unknown tree', scientific_name: null, confidence: 0,
       candidates: [],
-      notes: [...conversionNotes, 'No species match found. Try a clearer photo or a different organ hint.'],
+      notes: [...finalNotes, 'No species match found. Try a clearer photo or a different organ hint.'],
+      normStats,
       raw,
     }
   }
@@ -141,7 +172,8 @@ export async function identifyWithPlantNet({ photos = [], organHint = 'auto' }) 
   return {
     provider: 'plantnet', enabled: true,
     common_name, scientific_name, confidence, candidates,
-    notes: conversionNotes,
+    notes: finalNotes,
+    normStats,
     raw,
   }
 }

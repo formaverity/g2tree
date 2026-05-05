@@ -243,6 +243,23 @@ export default function EstimatePanel() {
                 </div>
               )}
 
+              {result.normStats && (
+                <div className="ai-result-norm-stats">
+                  <span>{result.normStats.sentCount} photo{result.normStats.sentCount !== 1 ? 's' : ''} sent</span>
+                  <span className="norm-stats-sep">·</span>
+                  <span>
+                    {(result.normStats.totalOriginalBytes / 1_048_576).toFixed(1)} MB
+                    {' → '}
+                    {(result.normStats.totalOutputBytes / 1_048_576).toFixed(1)} MB
+                  </span>
+                  {result.normStats.skippedCount > 0 && (
+                    <span className="norm-stats-skipped">
+                      · {result.normStats.skippedCount} skipped (payload limit)
+                    </span>
+                  )}
+                </div>
+              )}
+
               {result.notes?.map((n, i) => (
                 <div key={i} className="ai-result-note">{n}</div>
               ))}

@@ -593,6 +593,18 @@ button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
   line-height: 1.5;
 }
 
+.ai-result-norm-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 6px;
+}
+.norm-stats-sep { color: var(--border); }
+.norm-stats-skipped { color: #e07060; }
+
 .ai-result-error {
   font-size: 13px;
   color: #e07060;
