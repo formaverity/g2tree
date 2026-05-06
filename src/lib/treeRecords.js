@@ -42,7 +42,11 @@
  *   -- Add RLS policy on objects: auth.uid()::text = (storage.foldername(name))[1]
  */
 
-import { supabase } from './supabaseClient'
+import { supabase, supabaseConfigError } from './supabaseClient'
+
+function requireSupabase() {
+  if (!supabase) throw new Error(supabaseConfigError)
+}
 import { buildTreeModelParams } from './treeModelParams'
 import { normalizeImageForPlantNet } from './imageNormalize'
 
@@ -53,6 +57,7 @@ import { normalizeImageForPlantNet } from './imageNormalize'
  * @param {object} state  Snapshot of the Zustand store (useTreeSession.getState())
  */
 export async function saveCurrentTree(state) {
+  requireSupabase()
   const { data: { user }, error: userError } = await supabase.auth.getUser()
   if (userError || !user) throw new Error('Not signed in')
 
@@ -158,6 +163,7 @@ export async function saveCurrentTree(state) {
  * Returns an array of lightweight rows (no full jsonb payloads).
  */
 export async function listMyTrees() {
+  requireSupabase()
   const { data, error } = await supabase
     .from('g2tree_trees')
     .select('id, name, species, created_at, estimates')
@@ -172,6 +178,7 @@ export async function listMyTrees() {
  * Returns { tree, photos: [{ id, url, file: null, exif }] }
  */
 export async function loadTree(id) {
+  requireSupabase()
   const { data: tree, error } = await supabase
     .from('g2tree_trees')
     .select('*')
@@ -210,6 +217,7 @@ export async function loadTree(id) {
  * Delete a tree record and its associated storage objects.
  */
 export async function deleteTree(id) {
+  requireSupabase()
   const { data: photoRows } = await supabase
     .from('g2tree_tree_photos')
     .select('storage_path')

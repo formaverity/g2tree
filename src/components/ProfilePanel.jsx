@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Trash2, Download, LogOut, Trees } from 'lucide-react'
 import useTreeSession from '../state/useTreeSession'
-import { supabase } from '../lib/supabaseClient'
+import { supabase, supabaseConfigured, supabaseConfigError } from '../lib/supabaseClient'
 import { listMyTrees, loadTree, deleteTree } from '../lib/treeRecords'
 
 // ── Auth form ─────────────────────────────────────────────────────────────────
@@ -15,6 +15,10 @@ function AuthForm() {
   const [error, setError] = useState(null)
   const [message, setMessage] = useState(null)
 
+  if (!supabaseConfigured) {
+    return <div className="auth-error">{supabaseConfigError}</div>
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     setLoading(true)
@@ -22,7 +26,11 @@ function AuthForm() {
     setMessage(null)
     try {
       if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({ email, password })
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: window.location.origin },
+        })
         if (error) throw error
         setMessage('Check your email for a confirmation link.')
       } else {
@@ -218,7 +226,7 @@ export default function ProfilePanel() {
   const returnStep = useTreeSession((s) => s.returnStep)
 
   async function handleSignOut() {
-    await supabase.auth.signOut()
+    if (supabase) await supabase.auth.signOut()
     setStep('capture')
   }
 
@@ -249,6 +257,18 @@ export default function ProfilePanel() {
             <ArrowLeft size={16} /> Back
           </button>
         </div>
+
+        {import.meta.env.DEV && (
+          <details className="debug-panel">
+            <summary>Debug: Supabase config</summary>
+            <ul>
+              <li>hasSupabaseUrl: {String(Boolean(import.meta.env.VITE_SUPABASE_URL))}</li>
+              <li>hasAnonKey: {String(Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY))}</li>
+              <li>origin: {window.location.origin}</li>
+              <li>url: {window.location.href}</li>
+            </ul>
+          </details>
+        )}
       </div>
     </motion.div>
   )

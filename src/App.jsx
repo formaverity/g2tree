@@ -28,7 +28,8 @@ export default function App() {
   const StepComponent = STEP_MAP[step] || CapturePanel
 
   useEffect(() => {
-    // Restore any existing session on mount
+    if (!supabase) return
+
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
