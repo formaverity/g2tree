@@ -3,11 +3,12 @@ import { motion } from 'framer-motion'
 import { ArrowLeft, Copy, Download, Box, Send } from 'lucide-react'
 import useTreeSession from '../state/useTreeSession'
 import { buildTreeModelParams } from '../lib/treeModelParams'
+import SaveTreeButton from './SaveTreeButton'
 
 function buildExportPayload({
   photos, landmarks, estimates, scaleRealWorldDist,
   userHints, treeStructureHints, speciesAIResult,
-  structureDetectionResult, previewMode,
+  structureDetectionResult, previewMode, textureSamples,
 }) {
   return {
     schema: 'g2tree/v2',
@@ -35,6 +36,11 @@ function buildExportPayload({
     image_normalization_notes: speciesAIResult?.notes?.filter((n) => n.includes('Converted')) ?? [],
     procedural_params:         buildTreeModelParams(estimates, treeStructureHints),
     procedural_complexity_mode: previewMode,
+    texture_samples: textureSamples ? {
+      bark:   textureSamples.bark   ? { has_sample: true, crop_rect: textureSamples.bark.cropRect }   : null,
+      leaf:   textureSamples.leaf   ? { has_sample: true, crop_rect: textureSamples.leaf.cropRect }   : null,
+      canopy: textureSamples.canopy ? { has_sample: true, crop_rect: textureSamples.canopy.cropRect } : null,
+    } : null,
   }
 }
 
@@ -42,7 +48,7 @@ export default function ExportPanel() {
   const {
     photos, landmarks, estimates, scaleRealWorldDist,
     userHints, treeStructureHints, speciesAIResult,
-    structureDetectionResult, previewMode,
+    structureDetectionResult, previewMode, textureSamples,
     setStep,
   } = useTreeSession()
 
@@ -51,7 +57,7 @@ export default function ExportPanel() {
   const payload = buildExportPayload({
     photos, landmarks, estimates, scaleRealWorldDist,
     userHints, treeStructureHints, speciesAIResult,
-    structureDetectionResult, previewMode,
+    structureDetectionResult, previewMode, textureSamples,
   })
   const json = JSON.stringify(payload, null, 2)
 
@@ -82,6 +88,8 @@ export default function ExportPanel() {
       <div className="panel-body">
         <h2 className="panel-title">Export</h2>
         <p className="panel-desc">Structured tree record ready for export.</p>
+
+        <SaveTreeButton />
 
         <div className="export-actions">
           <button className="btn-primary" onClick={handleCopy}>

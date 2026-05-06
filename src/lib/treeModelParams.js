@@ -2,7 +2,78 @@
  * Convert tree estimates + structure hints into procedural 3D model parameters.
  * All geometry is normalized — trunk height = 1.0 unit.
  */
-export function buildTreeModelParams(estimates, treeStructureHints = {}) {
+
+// ── Species taxonomy lookup tables ───────────────────────────────────────────
+
+const DECIDUOUS_GENERA = new Set([
+  'Acer','Quercus','Fagus','Betula','Platanus','Ulmus','Tilia',
+  'Fraxinus','Populus','Prunus','Liquidambar','Liriodendron',
+  'Nyssa','Carpinus','Corylus','Alnus','Juglans','Castanea',
+  'Gleditsia','Robinia','Celtis','Magnolia','Cercis','Morus',
+])
+
+const CONIFER_GENERA = new Set([
+  'Pinus','Picea','Abies','Thuja','Juniperus','Tsuga','Cedrus',
+  'Larix','Sequoia','Sequoiadendron','Pseudotsuga','Chamaecyparis',
+  'Cupressus','Taxus','Cryptomeria','Calocedrus','Metasequoia',
+])
+
+const PALM_GENERA = new Set([
+  'Phoenix','Washingtonia','Sabal','Chamaerops','Trachycarpus',
+  'Syagrus','Roystonea','Livistona','Cocos','Butia','Brahea',
+])
+
+const COLUMNAR_CONIFER_GENERA = new Set([
+  'Juniperus','Thuja','Chamaecyparis','Cupressus','Calocedrus',
+])
+
+const RE_CONIFER   = /\b(pine|spruce|fir|cedar|juniper|hemlock|larch|cypress|redwood|yew|arborvitae|douglas.fir)\b/i
+const RE_PALM      = /\b(palm|palmetto)\b/i
+const RE_DECIDUOUS = /\b(oak|maple|beech|birch|elm|ash|poplar|cherry|sycamore|linden|basswood|sweetgum|tupelo|walnut|chestnut|hornbeam|hazel|alder|locust|redbud|magnolia)\b/i
+
+// ── Public helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Infer broad tree type from species names.
+ * Returns 'deciduous_broadleaf' | 'conifer' | 'palm_like' | 'unknown'
+ */
+export function inferTreeType(scientificName, commonName) {
+  const sci = (scientificName || '').trim()
+  if (sci) {
+    const genus = sci.split(/\s+/)[0]
+    if (DECIDUOUS_GENERA.has(genus)) return 'deciduous_broadleaf'
+    if (CONIFER_GENERA.has(genus))   return 'conifer'
+    if (PALM_GENERA.has(genus))      return 'palm_like'
+  }
+  const com = commonName || ''
+  if (RE_CONIFER.test(com))   return 'conifer'
+  if (RE_PALM.test(com))      return 'palm_like'
+  if (RE_DECIDUOUS.test(com)) return 'deciduous_broadleaf'
+  return 'unknown'
+}
+
+function inferCrownHabit(genus, treeType, canopyDistribution) {
+  if (treeType === 'conifer') {
+    return COLUMNAR_CONIFER_GENERA.has(genus) ? 'columnar' : 'conical'
+  }
+  if (treeType === 'palm_like') return 'palm_crown'
+  if (treeType === 'deciduous_broadleaf') {
+    if (genus === 'Quercus')  return 'broad_irregular'
+    if (genus === 'Fagus')    return 'oval'
+    if (genus === 'Betula')   return 'open_airy'
+    if (canopyDistribution === 'asymmetric') return 'broad_irregular'
+  }
+  return 'rounded'
+}
+
+// ── Main export ───────────────────────────────────────────────────────────────
+
+/**
+ * @param {object} estimates
+ * @param {object} [treeStructureHints]
+ * @param {object} [speciesInfo]  { scientificName?, commonName? }
+ */
+export function buildTreeModelParams(estimates, treeStructureHints = {}, speciesInfo = {}) {
   const {
     height_ft       = 30,
     canopy_width_ft = 20,
@@ -19,7 +90,14 @@ export function buildTreeModelParams(estimates, treeStructureHints = {}) {
     leafDistribution        = 'clustered',
   } = treeStructureHints || {}
 
-  // 'unknown' renders as single — safe default
+  const { scientificName = '', commonName = '' } = speciesInfo
+
+  // ── Species / type inference ──────────────────────────────────────────────
+  const treeType   = inferTreeType(scientificName, commonName)
+  const genus      = (scientificName || '').trim().split(/\s+/)[0] || ''
+  const crownHabit = inferCrownHabit(genus, treeType, canopyDistribution)
+
+  // 'unknown' trunk form renders as single — safe default
   const trunkForm = rawTrunkForm === 'unknown' ? 'single' : rawTrunkForm
 
   // ── Normalized trunk geometry ─────────────────────────────────────────────
@@ -28,9 +106,16 @@ export function buildTreeModelParams(estimates, treeStructureHints = {}) {
 
   const trunkHeight     = 1.0
   const trunkRadiusBase = Math.max(0.025, trunkRadiusRatio)
-  const trunkRadiusTop  = trunkRadiusBase * 0.42
-  const canopyRadius    = Math.max(0.3, canopyRatio * 0.5)
-  const canopyYOffset   = trunkHeight * 0.72
+  // Conifers have a much more tapered apex
+  const trunkRadiusTop  = trunkRadiusBase * (treeType === 'conifer' ? 0.26 : 0.42)
+
+  // Conifers have a narrower effective canopy radius (conical shape)
+  const canopyRadiusRaw = Math.max(0.3, canopyRatio * 0.5)
+  const canopyRadius    = treeType === 'conifer'
+    ? canopyRadiusRaw * 0.72
+    : canopyRadiusRaw
+  // Conifers: canopy centre sits lower since mass is spread along trunk
+  const canopyYOffset   = trunkHeight * (treeType === 'conifer' ? 0.54 : 0.72)
 
   // ── Branch counts ─────────────────────────────────────────────────────────
   const ageBonus = age_class === 'young' ? 0 : age_class === 'mid-age' ? 1 : 2
@@ -48,8 +133,19 @@ export function buildTreeModelParams(estimates, treeStructureHints = {}) {
     leafDistribution === 'sparse'      ? 1 :
     leafDistribution === 'outer_shell' ? 1 : 2
 
-  const leafClusterRadius = canopyRadius * 0.22
+  // Conifers have smaller, denser needle clusters
+  const leafClusterRadius = canopyRadius * (treeType === 'conifer' ? 0.15 : 0.22)
   const branchLength      = trunkHeight * 0.28 * canopyRatio
+
+  // ── Conifer-specific: whorled branch tier count ───────────────────────────
+  const branchTierCount = treeType === 'conifer'
+    ? Math.min(12, Math.max(5, 5 + ageBonus + (branchDensity === 'high' ? 2 : branchDensity === 'low' ? -1 : 0)))
+    : 0
+
+  // ── Leaf cluster total (informational for export schema) ──────────────────
+  const leafClusterCount = treeType === 'conifer'
+    ? branchTierCount * 5 * 2
+    : primaryBranchCount * secondaryBranchCount * leafClustersPerTip
 
   // ── Canopy density by health ──────────────────────────────────────────────
   const healthDensity =
@@ -63,14 +159,47 @@ export function buildTreeModelParams(estimates, treeStructureHints = {}) {
 
   const canopyDensity = healthDensity * distributionMod
 
-  const canopyColor =
-    health_status === 'good' ? '#3d7a4a' :
-    health_status === 'fair' ? '#6b8c3e' :
-    health_status === 'poor' ? '#8c7a3e' : '#4a7a52'
+  // Patchiness: fraction of leaf clusters shown as dead gaps
+  const patchiness =
+    health_status === 'poor' ? 0.36 :
+    health_status === 'fair' ? 0.12 : 0
 
-  const trunkColor = '#5c4033'
+  // ── Canopy colour by type × health ───────────────────────────────────────
+  const canopyColor = (() => {
+    if (treeType === 'conifer') {
+      return health_status === 'good' ? '#2a5c38' :
+             health_status === 'fair' ? '#4a6830' :
+             health_status === 'poor' ? '#786038' : '#325a3c'
+    }
+    if (treeType === 'palm_like') {
+      return health_status === 'good' ? '#4a8c3c' :
+             health_status === 'fair' ? '#6a8c34' :
+             health_status === 'poor' ? '#8a7a34' : '#508040'
+    }
+    return health_status === 'good' ? '#3d7a4a' :
+           health_status === 'fair' ? '#6b8c3e' :
+           health_status === 'poor' ? '#8c7a3e' : '#4a7a52'
+  })()
 
-  // Legacy fields retained for any external consumers
+  // Conifers have darker, redder-brown bark
+  const trunkColor = treeType === 'conifer' ? '#4a3828' : '#5c4033'
+
+  // ── Architecture descriptors (output for schema + rendering) ─────────────
+  const trunkArchitecture =
+    trunkForm === 'multi'     ? 'multi' :
+    trunkForm === 'forked'    ? 'forked' :
+    treeType  === 'palm_like' ? 'palm' :
+    treeType  === 'conifer'   ? 'single_leader' : 'branching_leader'
+
+  const branchArchitecture =
+    treeType === 'conifer'   ? 'whorled' :
+    treeType === 'palm_like' ? 'fronds' : 'alternate'
+
+  const foliageType =
+    treeType === 'conifer'   ? 'needle_masses' :
+    treeType === 'palm_like' ? 'frond_arches'  : 'broadleaf_clusters'
+
+  // Legacy fields retained for external consumers
   const branchLevels = age_class === 'young' ? 1 : age_class === 'mid-age' ? 2 : 3
   const branchCount  = primaryBranchCount
 
@@ -94,5 +223,16 @@ export function buildTreeModelParams(estimates, treeStructureHints = {}) {
     trunkCount: Math.max(1, Math.min(5, trunkCount || 1)),
     leafDistribution,
     canopyDistribution,
+    branchDensity,
+    // ── New fields ──
+    treeType,
+    crownHabit,
+    trunkArchitecture,
+    branchArchitecture,
+    foliageType,
+    leafClusterCount,
+    branchTierCount,
+    patchiness,
+    genus,
   }
 }

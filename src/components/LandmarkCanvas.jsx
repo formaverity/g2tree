@@ -1,6 +1,6 @@
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, ArrowLeft, Ruler } from 'lucide-react'
+import { ArrowRight, ArrowLeft, Ruler, RotateCcw } from 'lucide-react'
 import useTreeSession from '../state/useTreeSession'
 
 // Groups: trunk (green), dbh (orange), canopy (teal), scale (amber)
@@ -19,17 +19,23 @@ const POINT_RADIUS = 14
 
 export default function LandmarkCanvas() {
   const {
-    photos, landmarks, setLandmark,
+    photos, landmarks, setLandmark, resetLandmarks,
     showScaleRef, toggleScaleRef,
     scaleRealWorldDist, setScaleRealWorldDist,
     setStep,
   } = useTreeSession()
 
-  const containerRef = useRef()
   const imgRef = useRef()
   const [imgRect, setImgRect] = useState(null)
+  // dragging state drives cursor style and body-scroll lock
   const [dragging, setDragging] = useState(null)
+  // ref for synchronous drag check inside pointer handlers (avoids React async-state race)
+  const draggingRef = useRef(null)
   const [selected, setSelected] = useState('trunk_base')
+
+  // Local string state so the user can clear/edit without snapping back to 1
+  const [distRaw, setDistRaw] = useState(String(scaleRealWorldDist))
+  useEffect(() => { setDistRaw(String(scaleRealWorldDist)) }, [scaleRealWorldDist])
 
   const calibPhoto = photos[0]
 
@@ -45,55 +51,44 @@ export default function LandmarkCanvas() {
     return () => window.removeEventListener('resize', measure)
   }, [])
 
-  function toNorm(clientX, clientY, rect) {
-    return {
-      x: Math.max(0, Math.min(1, (clientX - rect.x) / rect.w)),
-      y: Math.max(0, Math.min(1, (clientY - rect.y) / rect.h)),
-    }
-  }
+  // Lock body scroll while a point is actively dragged
+  useEffect(() => {
+    if (!dragging) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [dragging])
 
   function toPixel(norm, rect) {
     return { x: norm.x * rect.w, y: norm.y * rect.h }
   }
 
-  function onMouseDown(e, key) {
+  function handlePointerDown(e, key) {
     e.preventDefault()
+    e.stopPropagation()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    draggingRef.current = key
     setDragging(key)
     setSelected(key)
   }
 
-  const onMouseMove = useCallback((e) => {
-    if (!dragging || !imgRect) return
-    setLandmark(dragging, toNorm(e.clientX, e.clientY, imgRect))
-  }, [dragging, imgRect])
-
-  const onMouseUp = useCallback(() => setDragging(null), [])
-
-  function onTouchStart(e, key) {
-    setDragging(key)
-    setSelected(key)
+  function handlePointerMove(e, key) {
+    // Guard: only update when this exact point is being dragged (blocks hover updates)
+    if (!draggingRef.current) return
+    e.preventDefault()
+    if (!imgRef.current) return
+    const r = imgRef.current.getBoundingClientRect()
+    setLandmark(key, {
+      x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
+      y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
+    })
   }
 
-  const onTouchMove = useCallback((e) => {
-    if (!dragging || !imgRect) return
-    const t = e.touches[0]
-    setLandmark(dragging, toNorm(t.clientX, t.clientY, imgRect))
-  }, [dragging, imgRect])
-
-  const onTouchEnd = useCallback(() => setDragging(null), [])
-
-  useEffect(() => {
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
-    window.addEventListener('touchmove', onTouchMove, { passive: false })
-    window.addEventListener('touchend', onTouchEnd)
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
-      window.removeEventListener('touchmove', onTouchMove)
-      window.removeEventListener('touchend', onTouchEnd)
-    }
-  }, [onMouseMove, onMouseUp, onTouchMove, onTouchEnd])
+  function handlePointerUp(e) {
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    draggingRef.current = null
+    setDragging(null)
+  }
 
   const visibleLandmarks = LANDMARK_CONFIG.filter(
     (l) => l.group !== 'scale' || showScaleRef
@@ -131,7 +126,7 @@ export default function LandmarkCanvas() {
           If photographed from the base looking up, use the clearest visible trunk width.
         </div>
 
-        <div className="landmark-img-container" ref={containerRef}>
+        <div className="landmark-img-container">
           {calibPhoto ? (
             <>
               <img
@@ -174,9 +169,11 @@ export default function LandmarkCanvas() {
                       <g
                         key={lm.key}
                         transform={`translate(${px.x},${px.y})`}
-                        onMouseDown={(e) => onMouseDown(e, lm.key)}
-                        onTouchStart={(e) => onTouchStart(e, lm.key)}
-                        style={{ cursor: 'grab' }}
+                        onPointerDown={(e) => handlePointerDown(e, lm.key)}
+                        onPointerMove={(e) => handlePointerMove(e, lm.key)}
+                        onPointerUp={handlePointerUp}
+                        onPointerCancel={handlePointerUp}
+                        style={{ cursor: dragging === lm.key ? 'grabbing' : 'grab' }}
                       >
                         <circle
                           r={POINT_RADIUS}
@@ -223,8 +220,16 @@ export default function LandmarkCanvas() {
                 type="number"
                 min="0.1"
                 step="0.1"
-                value={scaleRealWorldDist}
-                onChange={(e) => setScaleRealWorldDist(parseFloat(e.target.value) || 1)}
+                value={distRaw}
+                onChange={(e) => {
+                  setDistRaw(e.target.value)
+                  const v = parseFloat(e.target.value)
+                  if (v > 0) setScaleRealWorldDist(v)
+                }}
+                onBlur={() => {
+                  const v = parseFloat(distRaw)
+                  if (!(v > 0)) { setScaleRealWorldDist(1); setDistRaw('1') }
+                }}
                 className="scale-input"
               />
               m
@@ -235,6 +240,9 @@ export default function LandmarkCanvas() {
         <div className="panel-footer">
           <button className="btn-back" onClick={() => setStep('review')}>
             <ArrowLeft size={16} /> Back
+          </button>
+          <button className="btn-icon" onClick={resetLandmarks}>
+            <RotateCcw size={14} /> Reset Points
           </button>
           <button className="btn-next" onClick={() => setStep('estimate')}>
             Estimate <ArrowRight size={16} />

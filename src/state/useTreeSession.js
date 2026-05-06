@@ -2,10 +2,28 @@ import { create } from 'zustand'
 
 const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
 
+const DEFAULT_LANDMARKS = {
+  trunk_base:   { x: 0.5,  y: 0.85 },
+  trunk_top:    { x: 0.5,  y: 0.35 },
+  canopy_left:  { x: 0.2,  y: 0.2  },
+  canopy_right: { x: 0.8,  y: 0.2  },
+  dbh_left:     { x: 0.47, y: 0.70 },
+  dbh_right:    { x: 0.53, y: 0.70 },
+  scale_a:      { x: 0.1,  y: 0.9  },
+  scale_b:      { x: 0.3,  y: 0.9  },
+}
+
 const useTreeSession = create((set, get) => ({
+  // Auth session (populated by supabase.auth.onAuthStateChange in App)
+  session: null,
+  setSession: (session) => set({ session }),
+
   // Step management
-  step: 'capture', // capture | review | calibrate | estimate | preview | export
+  // profile is outside the main workflow — handled by StepHeader profile button
+  step: 'capture', // capture | review | calibrate | estimate | preview | export | profile
+  returnStep: 'capture', // step to return to when leaving profile
   setStep: (step) => set({ step }),
+  setReturnStep: (step) => set({ returnStep: step }),
 
   // Photos
   photos: [], // [{ id, url, file, exif }]
@@ -18,6 +36,8 @@ const useTreeSession = create((set, get) => ({
     }))
     set((s) => ({ photos: [...s.photos, ...newPhotos] }))
   },
+  // Used when restoring saved trees (photos arrive as { id, url, file: null, exif })
+  setPhotos: (photos) => set({ photos }),
   removePhoto: (id) => {
     const photo = get().photos.find((p) => p.id === id)
     if (photo) URL.revokeObjectURL(photo.url)
@@ -29,18 +49,10 @@ const useTreeSession = create((set, get) => ({
     })),
 
   // Landmarks (normalized 0-1 coords relative to first image)
-  landmarks: {
-    trunk_base:   { x: 0.5,  y: 0.85 },
-    trunk_top:    { x: 0.5,  y: 0.35 },
-    canopy_left:  { x: 0.2,  y: 0.2  },
-    canopy_right: { x: 0.8,  y: 0.2  },
-    dbh_left:     { x: 0.47, y: 0.70 },
-    dbh_right:    { x: 0.53, y: 0.70 },
-    scale_a:      { x: 0.1,  y: 0.9  },
-    scale_b:      { x: 0.3,  y: 0.9  },
-  },
+  landmarks: { ...DEFAULT_LANDMARKS },
   setLandmark: (key, pos) =>
     set((s) => ({ landmarks: { ...s.landmarks, [key]: pos } })),
+  resetLandmarks: () => set({ landmarks: { ...DEFAULT_LANDMARKS } }),
 
   // Scale reference
   showScaleRef: false,
@@ -88,6 +100,16 @@ const useTreeSession = create((set, get) => ({
   // Preview mode — structured on desktop, simple on mobile
   previewMode: isMobile ? 'simple' : 'structured', // simple | structured | detailed
   setPreviewMode: (mode) => set({ previewMode: mode }),
+
+  // Texture samples cropped from field photos
+  textureSamples: { bark: null, leaf: null, canopy: null },
+  setTextureSample: (type, sample) =>
+    set((s) => ({ textureSamples: { ...s.textureSamples, [type]: sample } })),
+  clearTextureSample: (type) => {
+    const url = get().textureSamples[type]?.url
+    if (url) URL.revokeObjectURL(url)
+    set((s) => ({ textureSamples: { ...s.textureSamples, [type]: null } }))
+  },
 }))
 
 export default useTreeSession

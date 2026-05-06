@@ -1,4 +1,4 @@
-import { Suspense, useMemo } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { motion } from 'framer-motion'
@@ -23,8 +23,8 @@ function cylSeg(from, to, r0, r1) {
 }
 
 // ── Tree geometry generator ───────────────────────────────────────────────────
-// Builds flat arrays of trunk segments, branch segments, leaf clusters,
-// and optional speckle positions. Deterministic — no Math.random() calls.
+// All sub-builders are closures over shared flat arrays.
+// Fully deterministic — no Math.random() calls.
 
 function buildGeometry(params, mode) {
   const {
@@ -34,6 +34,8 @@ function buildGeometry(params, mode) {
     primaryBranchCount, secondaryBranchCount, leafClustersPerTip,
     leafClusterRadius, branchLength,
     leafDistribution, canopyDistribution,
+    treeType, crownHabit, branchTierCount, patchiness,
+    branchDensity,
   } = params
 
   const MAX_SEGS    = 140
@@ -49,6 +51,8 @@ function buildGeometry(params, mode) {
   const isDetailed = mode === 'detailed'
   const asymX      = canopyDistribution === 'asymmetric' ? canopyRadius * 0.28 : 0
 
+  // ── Shared helpers ──────────────────────────────────────────────────────────
+
   function addTrunk(from, to, r0, r1) {
     const s = cylSeg(from, to, r0, r1)
     if (s && trunks.length < MAX_SEGS) trunks.push(s)
@@ -59,13 +63,19 @@ function buildGeometry(params, mode) {
     if (s && branches.length < MAX_SEGS) branches.push(s)
   }
 
-  function addLeaf(pos, radius, opacity) {
+  // isConiferNeedle flag drives segment count in the renderer (faceted look)
+  function addLeaf(pos, radius, baseOpacity, isConiferNeedle = false) {
     if (leafClusters.length >= MAX_LEAVES) return
-    leafClusters.push({ pos, radius, opacity })
+    // Deterministic dead-gap patchiness for stressed trees
+    let opacity = baseOpacity
+    if (patchiness > 0) {
+      const gapEvery = Math.max(2, Math.round(1 / patchiness))
+      if (leafClusters.length % gapEvery === 0) opacity *= 0.07
+    }
+    leafClusters.push({ pos, radius, opacity, isConiferNeedle })
     if (isDetailed) {
       const n = Math.min(7, MAX_SPECKLE - speckleXYZ.length / 3)
       for (let k = 0; k < n; k++) {
-        // Fibonacci sphere distribution — deterministic
         const phi   = Math.acos(1 - 2 * (k + 0.5) / n)
         const theta = Math.PI * (1 + Math.sqrt(5)) * k
         const r     = radius * 0.88
@@ -78,151 +88,293 @@ function buildGeometry(params, mode) {
     }
   }
 
-  function growBranches(attachPt, trunkDirArr, pCount, lengthScale) {
-    if (isSimple || pCount === 0) return
-    const trunkDir = new THREE.Vector3(...trunkDirArr)
-    const q = new THREE.Quaternion().setFromUnitVectors(Y_UP, trunkDir)
+  // ── Conifer form ────────────────────────────────────────────────────────────
+  // Central leader, whorled branch tiers, tapering conical outline.
 
-    for (let i = 0; i < pCount; i++) {
-      const angle = (i / pCount) * Math.PI * 2
-      const dir = new THREE.Vector3(
-        Math.sin(angle) * 0.78 + (i === 0 ? asymX * 0.4 : 0),
-        0.52,
-        Math.cos(angle) * 0.78
-      ).normalize().applyQuaternion(q)
+  function buildConiferForm() {
+    const isColumnar = crownHabit === 'columnar'
 
-      const bLen = branchLength * lengthScale * (0.95 + (i % 3) * 0.08)
-      const bEnd = [
-        attachPt[0] + dir.x * bLen,
-        attachPt[1] + dir.y * bLen,
-        attachPt[2] + dir.z * bLen,
-      ]
-      addBranch(attachPt, bEnd, trunkRadiusTop * 0.55, trunkRadiusTop * 0.27)
+    // Central leader — slender, strongly tapered
+    addTrunk([0, 0, 0], [0, trunkHeight, 0], trunkRadiusBase, trunkRadiusTop * 0.30)
 
-      for (let j = 0; j < secondaryBranchCount; j++) {
-        const secAngle = angle + (j - secondaryBranchCount / 2 + 0.5) * 1.15
-        const secDir = new THREE.Vector3(
-          Math.sin(secAngle) * 0.82, 0.55 + j * 0.1, Math.cos(secAngle) * 0.82
-        ).normalize()
-        const secLen = bLen * 0.50
-        const secEnd = [
-          bEnd[0] + secDir.x * secLen,
-          bEnd[1] + secDir.y * secLen,
-          bEnd[2] + secDir.z * secLen,
-        ]
-        addBranch(bEnd, secEnd, trunkRadiusTop * 0.20, trunkRadiusTop * 0.10)
+    if (isSimple) {
+      // Simple: single narrow canopy blob centred on the trunk
+      addLeaf([0, trunkHeight * 0.52, 0], canopyRadius * 0.72, 0.90, true)
+      return
+    }
 
-        for (let k = 0; k < leafClustersPerTip; k++) {
-          const lPos = [
-            secEnd[0] + (k % 2 === 0 ? 0.06 : -0.06) * (j + 1),
-            secEnd[1] + 0.04 * k,
-            secEnd[2] + 0.06 * (j + 0.5),
+    const tierCount  = branchTierCount
+    const tierStart  = isColumnar ? 0.08 : 0.14
+    const tierEnd    = 0.91
+    // Tiers slope downward — more on conical, almost flat on columnar
+    const downSlope  = isColumnar ? 0.06 : 0.24
+
+    for (let tier = 0; tier < tierCount; tier++) {
+      const t      = tierStart + (tier / Math.max(tierCount - 1, 1)) * (tierEnd - tierStart)
+      const tierY  = trunkHeight * t
+
+      // Upper tiers are shorter (creates the conical silhouette)
+      const taperF = isColumnar
+        ? 0.82
+        : Math.max(0.14, 1.0 - t * 0.82)
+
+      const tierLen       = canopyRadius * taperF * 1.15
+      const branchesInWhorl = 5
+      // Rotate each tier so whorls interleave visually
+      const tierRot       = tier * (Math.PI * 2 / branchesInWhorl) * 0.40
+
+      const brR0 = trunkRadiusTop * 0.52 * Math.max(taperF, 0.28)
+      const brR1 = brR0 * 0.30
+
+      for (let b = 0; b < branchesInWhorl; b++) {
+        const angle  = (b / branchesInWhorl) * Math.PI * 2 + tierRot
+        const bX     = Math.sin(angle)
+        const bZ     = Math.cos(angle)
+        const dropY  = downSlope * tierLen
+
+        const midPt  = [bX * tierLen * 0.50, tierY - dropY * 0.38, bZ * tierLen * 0.50]
+        const tipPt  = [bX * tierLen,         tierY - dropY,        bZ * tierLen        ]
+
+        addBranch([0, tierY, 0], midPt, brR0, brR1 * 1.20)
+        addBranch(midPt, tipPt, brR1 * 1.10, brR1 * 0.45)
+
+        // Two needle masses per branch — mid and tip
+        const nR = leafClusterRadius * (0.65 + taperF * 0.35)
+        addLeaf(midPt, nR * 0.82, 0.72 + tier * 0.012, true)
+        addLeaf(tipPt, nR,         0.76 + tier * 0.012, true)
+      }
+
+      // Detailed mode: short downward sub-branches on lower tiers
+      if (isDetailed && t < 0.62) {
+        for (let b = 0; b < 3; b++) {
+          const angle  = (b / 3) * Math.PI * 2 + tierRot + Math.PI / 5
+          const subLen = tierLen * 0.38
+          const subPt  = [
+            Math.sin(angle) * subLen,
+            tierY - downSlope * subLen * 1.30,
+            Math.cos(angle) * subLen,
           ]
-          addLeaf(lPos, leafClusterRadius * (0.85 + (j + k) % 3 * 0.1), 0.68 + (i % 5) * 0.06)
+          addBranch([0, tierY, 0], subPt, brR0 * 0.44, brR1 * 0.42)
+          addLeaf(subPt, leafClusterRadius * 0.52 * taperF, 0.64, true)
         }
+      }
+    }
+
+    // Tip spire above crown
+    addTrunk([0, trunkHeight * 0.88, 0], [0, trunkHeight * 1.07, 0],
+             trunkRadiusTop * 0.28, 0.004)
+  }
+
+  // ── Palm form ───────────────────────────────────────────────────────────────
+
+  function buildPalmForm() {
+    const lean = 0.055
+    const midH = [lean * 0.5, trunkHeight * 0.54, 0]
+    const top  = [lean, trunkHeight, 0]
+
+    // Two-segment slightly curved trunk
+    addTrunk([0, 0, 0], midH, trunkRadiusBase, trunkRadiusBase * 0.72)
+    addTrunk(midH, top, trunkRadiusBase * 0.72, trunkRadiusTop)
+
+    if (isSimple) {
+      addLeaf([lean, trunkHeight * 1.04, 0], canopyRadius * 0.58, 0.90)
+      return
+    }
+
+    const frondCount = branchDensity === 'high' ? 11 : branchDensity === 'low' ? 7 : 9
+    const frondLen   = canopyRadius * 1.35
+
+    for (let i = 0; i < frondCount; i++) {
+      const angle    = (i / frondCount) * Math.PI * 2
+      const elevUp   = 0.52
+      const bX       = Math.sin(angle)
+      const bZ       = Math.cos(angle)
+
+      // Arc: rises then falls
+      const midFrond = [
+        top[0] + bX * frondLen * 0.44,
+        top[1] + elevUp * frondLen * 0.44,
+        top[2] + bZ * frondLen * 0.44,
+      ]
+      const tipFrond = [
+        top[0] + bX * frondLen,
+        top[1] + elevUp * frondLen * 0.44 - frondLen * 0.38,
+        top[2] + bZ * frondLen,
+      ]
+
+      const frR0 = trunkRadiusTop * 0.68
+      addBranch(top,      midFrond, frR0,        frR0 * 0.52)
+      addBranch(midFrond, tipFrond, frR0 * 0.52, frR0 * 0.14)
+
+      addLeaf(tipFrond, leafClusterRadius * 0.92, 0.82)
+      if (leafClustersPerTip > 1) {
+        addLeaf(midFrond, leafClusterRadius * 0.62, 0.70)
       }
     }
   }
 
-  // ── Trunk forms ───────────────────────────────────────────────────────────
+  // ── Deciduous / unknown form ────────────────────────────────────────────────
+  // Branching scaffold with leaf clusters at secondary branch tips.
+  // Crown habit tunes attachment height, spread angle, upness, and length variation.
 
-  if (trunkForm === 'multi') {
-    const stems = Math.min(Math.max(trunkCount, 2), 5)
-    for (let i = 0; i < stems; i++) {
-      const angle   = (i / stems) * Math.PI * 2
-      const lean    = 0.10
-      const baseOff = [Math.sin(angle) * 0.07, 0, Math.cos(angle) * 0.07]
-      const tip     = [
-        baseOff[0] + Math.sin(angle) * lean * trunkHeight,
-        trunkHeight * 0.90,
-        baseOff[2] + Math.cos(angle) * lean * trunkHeight,
-      ]
-      addTrunk(baseOff, tip, trunkRadiusBase * 0.62, trunkRadiusTop * 0.7)
-      const tipDir = new THREE.Vector3(
-        tip[0] - baseOff[0], tip[1] - baseOff[1], tip[2] - baseOff[2]
-      ).normalize()
-      growBranches(tip, [tipDir.x, tipDir.y, tipDir.z], Math.ceil(primaryBranchCount / stems), 0.75)
+  function buildDeciduousForm() {
+    // Per-habit structural tuning
+    const HABITS = {
+      rounded:         { startT: 0.50, upness: 0.44, spread: 0.85, lenVar: 0.08, gapRate: 0    },
+      oval:            { startT: 0.56, upness: 0.53, spread: 0.72, lenVar: 0.05, gapRate: 0    },
+      broad_irregular: { startT: 0.36, upness: 0.30, spread: 0.95, lenVar: 0.20, gapRate: 0    },
+      open_airy:       { startT: 0.46, upness: 0.48, spread: 0.68, lenVar: 0.13, gapRate: 0.28 },
     }
+    const h = HABITS[crownHabit] || HABITS.rounded
 
-  } else if (trunkForm === 'forked') {
-    const splitH  = trunkHeight * 0.46
-    const splitPt = [0, splitH, 0]
-    addTrunk([0, 0, 0], splitPt, trunkRadiusBase, trunkRadiusBase * 0.68)
-    for (let i = 0; i < 2; i++) {
-      const angle     = (i / 2) * Math.PI * 2 + Math.PI * 0.22
-      const lean      = 0.22
-      const leaderH   = trunkHeight - splitH
-      const leaderEnd = [
-        splitPt[0] + Math.sin(angle) * lean * leaderH,
-        trunkHeight,
-        splitPt[2] + Math.cos(angle) * lean * leaderH,
-      ]
-      addTrunk(splitPt, leaderEnd, trunkRadiusBase * 0.52, trunkRadiusTop)
-      const lDir = new THREE.Vector3(
-        leaderEnd[0] - splitPt[0], leaderEnd[1] - splitPt[1], leaderEnd[2] - splitPt[2]
-      ).normalize()
-      growBranches(leaderEnd, [lDir.x, lDir.y, lDir.z], Math.ceil(primaryBranchCount / 2), 0.88)
-    }
+    // Branch scaffold for multi/forked/single trunk forms
+    function growBranches(attachPt, trunkDirArr, pCount, lengthScale) {
+      if (isSimple || pCount === 0) return
+      const td = new THREE.Vector3(...trunkDirArr)
+      const q  = new THREE.Quaternion().setFromUnitVectors(Y_UP, td)
 
-  } else {
-    // Single trunk with branches along upper shaft
-    addTrunk([0, 0, 0], [0, trunkHeight, 0], trunkRadiusBase, trunkRadiusTop)
+      for (let i = 0; i < pCount; i++) {
+        if (h.gapRate > 0 && i % Math.max(2, Math.round(1 / h.gapRate)) === 0) continue
 
-    if (!isSimple) {
-      for (let i = 0; i < primaryBranchCount; i++) {
-        const t       = 0.50 + (i / primaryBranchCount) * 0.40
-        const attachY = trunkHeight * t
-        const aX      = asymX * (1 - t)
-        const attachPt= [aX, attachY, 0]
-        const angle   = (i / primaryBranchCount) * Math.PI * 2 + i * 0.28
-        const upness  = 0.44 + t * 0.22
-        const dir     = new THREE.Vector3(Math.sin(angle) * 0.85, upness, Math.cos(angle) * 0.85).normalize()
-        const bLen    = branchLength * (1.05 - t * 0.28)
-        const bEnd    = [
+        const angle = (i / pCount) * Math.PI * 2
+        const dir   = new THREE.Vector3(
+          Math.sin(angle) * h.spread + (i === 0 ? asymX * 0.4 : 0),
+          h.upness,
+          Math.cos(angle) * h.spread,
+        ).normalize().applyQuaternion(q)
+
+        const bLen = branchLength * lengthScale * (0.95 + (i % 3) * h.lenVar)
+        const bEnd = [
           attachPt[0] + dir.x * bLen,
           attachPt[1] + dir.y * bLen,
           attachPt[2] + dir.z * bLen,
         ]
-        addBranch(attachPt, bEnd, trunkRadiusTop * 0.58, trunkRadiusTop * 0.28)
+        addBranch(attachPt, bEnd, trunkRadiusTop * 0.55, trunkRadiusTop * 0.27)
 
         for (let j = 0; j < secondaryBranchCount; j++) {
-          const secAngle = angle + (j - secondaryBranchCount / 2 + 0.5) * 1.1
-          const secDir   = new THREE.Vector3(Math.sin(secAngle) * 0.80, 0.58, Math.cos(secAngle) * 0.80).normalize()
-          const secLen   = bLen * 0.50
-          const secEnd   = [
-            bEnd[0] + secDir.x * secLen,
-            bEnd[1] + secDir.y * secLen,
-            bEnd[2] + secDir.z * secLen,
+          const secA = angle + (j - secondaryBranchCount / 2 + 0.5) * 1.15
+          const sDir = new THREE.Vector3(Math.sin(secA) * 0.82, h.upness + j * 0.10, Math.cos(secA) * 0.82).normalize()
+          const sLen = bLen * 0.50
+          const sEnd = [
+            bEnd[0] + sDir.x * sLen,
+            bEnd[1] + sDir.y * sLen,
+            bEnd[2] + sDir.z * sLen,
           ]
-          addBranch(bEnd, secEnd, trunkRadiusTop * 0.19, trunkRadiusTop * 0.09)
+          addBranch(bEnd, sEnd, trunkRadiusTop * 0.20, trunkRadiusTop * 0.10)
 
           for (let k = 0; k < leafClustersPerTip; k++) {
-            const lPos = [
-              secEnd[0] + (k % 2 === 0 ? 0.05 : -0.05) * (j + 1),
-              secEnd[1] + 0.04 * k,
-              secEnd[2] + 0.05 * (j + 0.5),
-            ]
-            addLeaf(lPos, leafClusterRadius * (0.85 + j % 3 * 0.1), 0.66 + i % 5 * 0.07)
+            addLeaf(
+              [sEnd[0] + (k % 2 === 0 ? 0.06 : -0.06) * (j + 1),
+               sEnd[1] + 0.04 * k,
+               sEnd[2] + 0.06 * (j + 0.5)],
+              leafClusterRadius * (0.85 + (j + k) % 3 * 0.10),
+              0.68 + (i % 5) * 0.06,
+            )
           }
         }
       }
     }
+
+    if (trunkForm === 'multi') {
+      const stems = Math.min(Math.max(trunkCount, 2), 5)
+      for (let i = 0; i < stems; i++) {
+        const angle   = (i / stems) * Math.PI * 2
+        const baseOff = [Math.sin(angle) * 0.07, 0, Math.cos(angle) * 0.07]
+        const tip     = [
+          baseOff[0] + Math.sin(angle) * 0.10 * trunkHeight,
+          trunkHeight * 0.90,
+          baseOff[2] + Math.cos(angle) * 0.10 * trunkHeight,
+        ]
+        addTrunk(baseOff, tip, trunkRadiusBase * 0.62, trunkRadiusTop * 0.7)
+        const td = new THREE.Vector3(tip[0]-baseOff[0], tip[1]-baseOff[1], tip[2]-baseOff[2]).normalize()
+        growBranches(tip, [td.x, td.y, td.z], Math.ceil(primaryBranchCount / stems), 0.75)
+      }
+
+    } else if (trunkForm === 'forked') {
+      const splitH  = trunkHeight * 0.46
+      const splitPt = [0, splitH, 0]
+      addTrunk([0, 0, 0], splitPt, trunkRadiusBase, trunkRadiusBase * 0.68)
+      for (let i = 0; i < 2; i++) {
+        const angle = (i / 2) * Math.PI * 2 + Math.PI * 0.22
+        const lH    = trunkHeight - splitH
+        const lEnd  = [
+          splitPt[0] + Math.sin(angle) * 0.22 * lH,
+          trunkHeight,
+          splitPt[2] + Math.cos(angle) * 0.22 * lH,
+        ]
+        addTrunk(splitPt, lEnd, trunkRadiusBase * 0.52, trunkRadiusTop)
+        const ld = new THREE.Vector3(lEnd[0]-splitPt[0], lEnd[1]-splitPt[1], lEnd[2]-splitPt[2]).normalize()
+        growBranches(lEnd, [ld.x, ld.y, ld.z], Math.ceil(primaryBranchCount / 2), 0.88)
+      }
+
+    } else {
+      // Single trunk — primary branches along upper shaft
+      addTrunk([0, 0, 0], [0, trunkHeight, 0], trunkRadiusBase, trunkRadiusTop)
+
+      if (!isSimple) {
+        for (let i = 0; i < primaryBranchCount; i++) {
+          if (h.gapRate > 0 && i % Math.max(2, Math.round(1 / h.gapRate)) === 0) continue
+
+          const t       = h.startT + (i / primaryBranchCount) * 0.40
+          const attachY = trunkHeight * t
+          const aX      = asymX * (1 - t)
+          const angle   = (i / primaryBranchCount) * Math.PI * 2 + i * 0.28
+          const upness  = h.upness + t * 0.22
+          const dir     = new THREE.Vector3(Math.sin(angle) * h.spread, upness, Math.cos(angle) * h.spread).normalize()
+          const bLen    = branchLength * (1.05 + h.lenVar * (i % 3) - t * 0.28)
+          const bEnd    = [aX + dir.x * bLen, attachY + dir.y * bLen, dir.z * bLen]
+
+          addBranch([aX, attachY, 0], bEnd, trunkRadiusTop * 0.58, trunkRadiusTop * 0.28)
+
+          for (let j = 0; j < secondaryBranchCount; j++) {
+            const secA = angle + (j - secondaryBranchCount / 2 + 0.5) * 1.10
+            const sDir = new THREE.Vector3(Math.sin(secA) * 0.80, 0.58, Math.cos(secA) * 0.80).normalize()
+            const sLen = bLen * 0.50
+            const sEnd = [bEnd[0] + sDir.x * sLen, bEnd[1] + sDir.y * sLen, bEnd[2] + sDir.z * sLen]
+
+            addBranch(bEnd, sEnd, trunkRadiusTop * 0.19, trunkRadiusTop * 0.09)
+
+            for (let k = 0; k < leafClustersPerTip; k++) {
+              addLeaf(
+                [sEnd[0] + (k % 2 === 0 ? 0.05 : -0.05) * (j + 1),
+                 sEnd[1] + 0.04 * k,
+                 sEnd[2] + 0.05 * (j + 0.5)],
+                leafClusterRadius * (0.85 + j % 3 * 0.10),
+                0.66 + i % 5 * 0.07,
+              )
+            }
+          }
+        }
+      }
+    }
+
+    // Canopy filler blobs
+    if (isSimple) {
+      addLeaf([asymX, canopyYOffset, 0], canopyRadius, 0.88)
+    } else {
+      const fillerN = leafDistribution === 'even' ? 6 : leafDistribution === 'outer_shell' ? 4 : 3
+      for (let i = 0; i < fillerN; i++) {
+        const angle = (i / fillerN) * Math.PI * 2
+        const r     = canopyRadius * 0.42
+        addLeaf(
+          [asymX + Math.sin(angle) * r,
+           canopyYOffset + (i % 2 === 0 ? 0.08 : -0.06) * canopyRadius,
+           Math.cos(angle) * r],
+          leafClusterRadius * 1.35,
+          canopyDensity * 0.62,
+        )
+      }
+    }
   }
 
-  // ── Canopy filler blobs ───────────────────────────────────────────────────
-  if (isSimple) {
-    addLeaf([asymX, canopyYOffset, 0], canopyRadius, 0.88)
+  // ── Dispatch ────────────────────────────────────────────────────────────────
+
+  if (treeType === 'conifer') {
+    buildConiferForm()
+  } else if (treeType === 'palm_like') {
+    buildPalmForm()
   } else {
-    const fillerN = leafDistribution === 'even' ? 6 : leafDistribution === 'outer_shell' ? 4 : 3
-    for (let i = 0; i < fillerN; i++) {
-      const angle = (i / fillerN) * Math.PI * 2
-      const r     = canopyRadius * 0.42
-      addLeaf(
-        [asymX + Math.sin(angle) * r, canopyYOffset + (i % 2 === 0 ? 0.08 : -0.06) * canopyRadius, Math.cos(angle) * r],
-        leafClusterRadius * 1.35,
-        canopyDensity * 0.62
-      )
-    }
+    buildDeciduousForm()  // deciduous_broadleaf and unknown
   }
 
   const speckles = speckleXYZ.length > 0 ? new Float32Array(speckleXYZ) : null
@@ -231,18 +383,18 @@ function buildGeometry(params, mode) {
 
 // ── Segment renderer ──────────────────────────────────────────────────────────
 
-function SegMesh({ seg, color }) {
+function SegMesh({ seg, color, map }) {
   return (
     <mesh position={seg.pos} quaternion={seg.q}>
       <cylinderGeometry args={[seg.r0, seg.r1, seg.len, 7, 1]} />
-      <meshStandardMaterial color={color} roughness={0.93} />
+      <meshStandardMaterial color={map ? '#ffffff' : color} roughness={0.93} map={map || null} />
     </mesh>
   )
 }
 
 // ── ProceduralTree ────────────────────────────────────────────────────────────
 
-function ProceduralTree({ params, mode }) {
+function ProceduralTree({ params, mode, barkMap, leafMap }) {
   const geo = useMemo(() => buildGeometry(params, mode), [params, mode])
 
   const speckleAttr = useMemo(() => {
@@ -252,17 +404,19 @@ function ProceduralTree({ params, mode }) {
 
   return (
     <group position={[0, -params.trunkHeight / 2, 0]}>
-      {geo.trunks.map((s, i)  => <SegMesh key={`t${i}`} seg={s} color={params.trunkColor} />)}
-      {geo.branches.map((s, i) => <SegMesh key={`b${i}`} seg={s} color={params.trunkColor} />)}
+      {geo.trunks.map((s, i)   => <SegMesh key={`t${i}`} seg={s} color={params.trunkColor} map={barkMap} />)}
+      {geo.branches.map((s, i) => <SegMesh key={`b${i}`} seg={s} color={params.trunkColor} map={barkMap} />)}
 
       {geo.leafClusters.map((lc, i) => (
         <mesh key={`l${i}`} position={lc.pos}>
-          <sphereGeometry args={[lc.radius, 7, 6]} />
+          {/* Needle masses use fewer segments for a faceted, denser look */}
+          <sphereGeometry args={[lc.radius, lc.isConiferNeedle ? 6 : 7, lc.isConiferNeedle ? 4 : 6]} />
           <meshStandardMaterial
-            color={params.canopyColor}
-            roughness={0.82}
+            color={leafMap ? '#ffffff' : params.canopyColor}
+            roughness={lc.isConiferNeedle ? 0.92 : 0.82}
             transparent
             opacity={lc.opacity * Math.min(params.canopyDensity, 1)}
+            map={leafMap || null}
           />
         </mesh>
       ))}
@@ -288,11 +442,50 @@ function ProceduralTree({ params, mode }) {
 
 const MODES = ['simple', 'structured', 'detailed']
 
+const TYPE_LABEL = {
+  deciduous_broadleaf: 'deciduous',
+  conifer:             'conifer',
+  palm_like:           'palm',
+}
+
 export default function TreePreview() {
-  const { estimates, treeStructureHints, previewMode, setPreviewMode, setStep } = useTreeSession()
+  const {
+    estimates, treeStructureHints,
+    speciesAIResult, userHints,
+    textureSamples,
+    previewMode, setPreviewMode, setStep,
+  } = useTreeSession()
+
+  const [barkMap, setBarkMap] = useState(null)
+  const [leafMap, setLeafMap] = useState(null)
+
+  const barkUrl = textureSamples?.bark?.url ?? null
+  const leafUrl = textureSamples?.leaf?.url ?? textureSamples?.canopy?.url ?? null
+
+  useEffect(() => {
+    if (!barkUrl) { setBarkMap(null); return }
+    const tex = new THREE.TextureLoader().load(barkUrl)
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+    tex.repeat.set(3, 2)
+    setBarkMap(tex)
+    return () => tex.dispose()
+  }, [barkUrl])
+
+  useEffect(() => {
+    if (!leafUrl) { setLeafMap(null); return }
+    const tex = new THREE.TextureLoader().load(leafUrl)
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+    tex.repeat.set(2, 2)
+    setLeafMap(tex)
+    return () => tex.dispose()
+  }, [leafUrl])
+
   const params = useMemo(
-    () => buildTreeModelParams(estimates, treeStructureHints),
-    [estimates, treeStructureHints]
+    () => buildTreeModelParams(estimates, treeStructureHints, {
+      scientificName: speciesAIResult?.scientific_name ?? '',
+      commonName:     speciesAIResult?.common_name ?? userHints?.known_species ?? '',
+    }),
+    [estimates, treeStructureHints, speciesAIResult, userHints],
   )
 
   return (
@@ -323,7 +516,7 @@ export default function TreePreview() {
             <directionalLight position={[3, 6, 4]} intensity={1.2} />
             <directionalLight position={[-3, 2, -2]} intensity={0.3} />
             <Suspense fallback={null}>
-              <ProceduralTree params={params} mode={previewMode} />
+              <ProceduralTree params={params} mode={previewMode} barkMap={barkMap} leafMap={leafMap} />
             </Suspense>
             <OrbitControls enablePan={false} minDistance={0.8} maxDistance={6} />
           </Canvas>
@@ -341,6 +534,12 @@ export default function TreePreview() {
                 <>
                   <span>·</span>
                   <span>{treeStructureHints.trunkForm} trunk</span>
+                </>
+              )}
+              {TYPE_LABEL[params.treeType] && (
+                <>
+                  <span>·</span>
+                  <span>{TYPE_LABEL[params.treeType]}</span>
                 </>
               )}
             </>

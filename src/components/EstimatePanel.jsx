@@ -6,6 +6,8 @@ import { estimateTree } from '../lib/estimateTree'
 import { identifySpeciesFromPhoto } from '../lib/speciesAI'
 import { PLANTNET_ORGANS } from '../lib/plantnet'
 import { detectTreeStructureFromPhoto } from '../lib/structureAI'
+import SaveTreeButton from './SaveTreeButton'
+import TextureSampler from './TextureSampler'
 
 const DBH_METHOD_LABEL = {
   user_confirmed:       { text: 'User confirmed',      cls: 'conf-high' },
@@ -267,6 +269,8 @@ export default function EstimatePanel() {
           )}
         </div>
 
+        <TextureSampler />
+
         {/* ── Tree Structure ───────────────────────────────────────────── */}
         <div className="hints-section">
           <button
@@ -481,6 +485,8 @@ export default function EstimatePanel() {
             {estimates.assumptions.map((a, i) => <li key={i}>{a}</li>)}
           </ul>
         </details>
+
+        <SaveTreeButton />
 
         <div className="panel-footer">
           <button className="btn-back" onClick={() => setStep('calibrate')}>
