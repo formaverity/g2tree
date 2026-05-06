@@ -43,6 +43,10 @@ export default function TextureSampler() {
   const [generating, setGenerating]   = useState(false)
   const [appliedMsg, setAppliedMsg]   = useState(null)
 
+  // Whether to use the masked PNG (vs original JPEG) when applying
+  // Default to masked for leaf/canopy, original for bark
+  const [useMasked, setUseMasked] = useState(false)
+
   const containerRef = useRef(null)
   const pointerRef   = useRef({ down: false, lastX: 0, lastY: 0 })
 
@@ -58,6 +62,11 @@ export default function TextureSampler() {
     setDragEnd(null)
     setPreview(null)
   }, [photo?.id])
+
+  // Reset masked preference whenever active type changes
+  useEffect(() => {
+    setUseMasked(activeType !== 'bark')
+  }, [activeType])
 
   function handleImageLoad(e) {
     const nw = e.target.naturalWidth
@@ -156,7 +165,11 @@ export default function TextureSampler() {
     setGenerating(true)
     try {
       const result = await cropTextureSample(photo.url, ix, iy, iw, ih, activeType)
-      if (result) setPreview(result)
+      if (result) {
+        setPreview(result)
+        // Reset useMasked to default for this type on new crop
+        setUseMasked(activeType !== 'bark' && !!result.maskDataUrl)
+      }
     } catch (err) {
       console.warn('Texture crop failed:', err)
     } finally {
@@ -168,7 +181,12 @@ export default function TextureSampler() {
 
   function handleApply() {
     if (!preview) return
-    setTextureSample(activeType, preview)
+    // Use masked PNG as dataUrl if user chose masked and mask is available
+    const sample = {
+      ...preview,
+      dataUrl: (useMasked && preview.maskDataUrl) ? preview.maskDataUrl : preview.dataUrl,
+    }
+    setTextureSample(activeType, sample)
     setAppliedMsg(`${activeType.charAt(0).toUpperCase() + activeType.slice(1)} sample applied to clone`)
     setPreview(null)
     setPendingRect(null)
@@ -182,7 +200,6 @@ export default function TextureSampler() {
 
   // ── Derived display values ──────────────────────────────────────────────────
 
-  // Live drag rectangle (container px)
   const liveRect = dragStart && dragEnd ? {
     left:   Math.min(dragStart.x, dragEnd.x),
     top:    Math.min(dragStart.y, dragEnd.y),
@@ -190,7 +207,6 @@ export default function TextureSampler() {
     height: Math.abs(dragEnd.y  - dragStart.y),
   } : null
 
-  // Committed box projected back to container px for persistent display
   const committedRect = pendingRect && transform ? {
     left:   pendingRect.x * transform.scale + transform.tx,
     top:    pendingRect.y * transform.scale + transform.ty,
@@ -285,7 +301,6 @@ export default function TextureSampler() {
               onPointerUp={handlePointerUp}
               onPointerCancel={handlePointerUp}
             >
-              {/* The image is rendered at its natural pixel size then CSS-transformed */}
               <img
                 src={photo.url}
                 alt="Sample source"
@@ -310,17 +325,14 @@ export default function TextureSampler() {
                 }}
               />
 
-              {/* Live drag rectangle */}
               {liveRect && (
                 <div className="texture-crop-rect" style={liveRect} />
               )}
 
-              {/* Committed box (shown while preview is loading or after redraw) */}
               {committedRect && !liveRect && (
                 <div className="texture-crop-rect texture-crop-rect--committed" style={committedRect} />
               )}
 
-              {/* Overlays */}
               {generating && (
                 <div className="texture-crop-overlay">Generating sample…</div>
               )}
@@ -335,23 +347,30 @@ export default function TextureSampler() {
             </div>
           )}
 
-          {/* Preview panel — shown after crop is generated */}
+          {/* Preview panel */}
           {preview && (
             <div className="texture-preview-card">
               <div className="texture-preview-row">
+                {/* Original crop */}
                 <div className="texture-preview-img-wrap">
-                  <img src={preview.dataUrl} alt="Crop" className="texture-preview-img" />
-                  <span className="texture-preview-label">Sample</span>
+                  <img src={preview.dataUrl} alt="Original" className="texture-preview-img" />
+                  <span className="texture-preview-label">Original</span>
                 </div>
 
+                {/* Masked result (leaf/canopy only) */}
                 {preview.maskDataUrl && (
                   <div className="texture-preview-img-wrap">
                     <img
                       src={preview.maskDataUrl}
-                      alt="Mask"
+                      alt="Masked"
                       className="texture-preview-img texture-preview-img--checker"
                     />
-                    <span className="texture-preview-label">Mask</span>
+                    <span className="texture-preview-label">
+                      Masked
+                      {preview.maskCoverage != null
+                        ? ` (${Math.round(preview.maskCoverage * 100)}%)`
+                        : ''}
+                    </span>
                   </div>
                 )}
 
@@ -372,6 +391,24 @@ export default function TextureSampler() {
                   <span className="texture-preview-color-label">Colours</span>
                 </div>
               </div>
+
+              {/* Original / Masked toggle (only when mask exists) */}
+              {preview.maskDataUrl && (
+                <div className="texture-use-toggle">
+                  <button
+                    className={`btn-secondary texture-toggle-btn${!useMasked ? ' active' : ''}`}
+                    onClick={() => setUseMasked(false)}
+                  >
+                    Use original crop
+                  </button>
+                  <button
+                    className={`btn-secondary texture-toggle-btn${useMasked ? ' active' : ''}`}
+                    onClick={() => setUseMasked(true)}
+                  >
+                    Use masked texture
+                  </button>
+                </div>
+              )}
 
               {preview.notes?.length > 0 && (
                 <p className="texture-preview-notes">{preview.notes.join(' · ')}</p>

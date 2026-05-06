@@ -1480,6 +1480,57 @@ button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
   padding: 6px 0;
 }
 
+/* ── Texture use toggle (original vs masked) ── */
+
+.texture-use-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.texture-toggle-btn {
+  flex: 1;
+  font-size: 11px;
+  padding: 5px 8px;
+  opacity: 0.6;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.texture-toggle-btn.active {
+  opacity: 1;
+  border-color: var(--green-mid);
+  color: var(--green-bright);
+}
+
+/* ── Preview error fallback ── */
+
+.preview-error-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  min-height: 180px;
+}
+
+/* ── Debug diagnostics (dev only) ── */
+
+.preview-diagnostics {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 4px 0 2px;
+  font-family: monospace;
+}
+
+.diag-error {
+  color: #e05050;
+}
+
 /* ── Material Inputs panel (TreePreview) ── */
 
 .material-inputs {

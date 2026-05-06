@@ -9,6 +9,7 @@ import PhotoReview from './components/PhotoReview'
 import LandmarkCanvas from './components/LandmarkCanvas'
 import EstimatePanel from './components/EstimatePanel'
 import TreePreview from './components/TreePreview'
+import PreviewErrorBoundary from './components/PreviewErrorBoundary'
 import ExportPanel from './components/ExportPanel'
 import ProfilePanel from './components/ProfilePanel'
 import './styles.css'
@@ -56,7 +57,13 @@ export default function App() {
       <StepHeader step={step} />
       <main className="app-main">
         <AnimatePresence mode="wait">
-          <StepComponent key={step} />
+          {step === 'preview' ? (
+            <PreviewErrorBoundary key="preview">
+              <TreePreview />
+            </PreviewErrorBoundary>
+          ) : (
+            <StepComponent key={step} />
+          )}
         </AnimatePresence>
       </main>
     </div>

@@ -168,6 +168,10 @@ export function buildTreeModelParams(estimates, treeStructureHints = {}, species
   const barkSample = textureSamples?.bark
   const leafSample = textureSamples?.leaf ?? textureSamples?.canopy
 
+  const trunkColor = barkSample?.averageColor ??
+    (treeType === 'conifer'   ? '#4a3a2a' :
+     treeType === 'palm_like' ? '#8a7a5a' : '#5a4a3a')
+
   // ── Canopy colour by type × health (overridden by texture sample if present) ─
   const canopyColorBase = (() => {
     if (treeType === 'conifer') {

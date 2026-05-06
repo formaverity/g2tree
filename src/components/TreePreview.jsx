@@ -6,6 +6,10 @@ import { ArrowRight, ArrowLeft } from 'lucide-react'
 import * as THREE from 'three'
 import useTreeSession from '../state/useTreeSession'
 import { buildTreeModelParams } from '../lib/treeModelParams'
+import { loadTextureSafe } from '../lib/threeTextureUtils'
+import PreviewErrorBoundary from './PreviewErrorBoundary'
+
+const SHOW_DEBUG = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PREVIEW === 'true'
 
 // ── Geometry helpers ──────────────────────────────────────────────────────────
 
@@ -63,10 +67,8 @@ function buildGeometry(params, mode) {
     if (s && branches.length < MAX_SEGS) branches.push(s)
   }
 
-  // isConiferNeedle flag drives segment count in the renderer (faceted look)
   function addLeaf(pos, radius, baseOpacity, isConiferNeedle = false) {
     if (leafClusters.length >= MAX_LEAVES) return
-    // Deterministic dead-gap patchiness for stressed trees
     let opacity = baseOpacity
     if (patchiness > 0) {
       const gapEvery = Math.max(2, Math.round(1 / patchiness))
@@ -89,39 +91,30 @@ function buildGeometry(params, mode) {
   }
 
   // ── Conifer form ────────────────────────────────────────────────────────────
-  // Central leader, whorled branch tiers, tapering conical outline.
 
   function buildConiferForm() {
     const isColumnar = crownHabit === 'columnar'
 
-    // Central leader — slender, strongly tapered
     addTrunk([0, 0, 0], [0, trunkHeight, 0], trunkRadiusBase, trunkRadiusTop * 0.30)
 
     if (isSimple) {
-      // Simple: single narrow canopy blob centred on the trunk
       addLeaf([0, trunkHeight * 0.52, 0], canopyRadius * 0.72, 0.90, true)
       return
     }
 
-    const tierCount  = branchTierCount
-    const tierStart  = isColumnar ? 0.08 : 0.14
-    const tierEnd    = 0.91
-    // Tiers slope downward — more on conical, almost flat on columnar
-    const downSlope  = isColumnar ? 0.06 : 0.24
+    const tierCount = branchTierCount
+    const tierStart = isColumnar ? 0.08 : 0.14
+    const tierEnd   = 0.91
+    const downSlope = isColumnar ? 0.06 : 0.24
 
     for (let tier = 0; tier < tierCount; tier++) {
       const t      = tierStart + (tier / Math.max(tierCount - 1, 1)) * (tierEnd - tierStart)
       const tierY  = trunkHeight * t
+      const taperF = isColumnar ? 0.82 : Math.max(0.14, 1.0 - t * 0.82)
 
-      // Upper tiers are shorter (creates the conical silhouette)
-      const taperF = isColumnar
-        ? 0.82
-        : Math.max(0.14, 1.0 - t * 0.82)
-
-      const tierLen       = canopyRadius * taperF * 1.15
+      const tierLen        = canopyRadius * taperF * 1.15
       const branchesInWhorl = 5
-      // Rotate each tier so whorls interleave visually
-      const tierRot       = tier * (Math.PI * 2 / branchesInWhorl) * 0.40
+      const tierRot        = tier * (Math.PI * 2 / branchesInWhorl) * 0.40
 
       const brR0 = trunkRadiusTop * 0.52 * Math.max(taperF, 0.28)
       const brR1 = brR0 * 0.30
@@ -138,13 +131,11 @@ function buildGeometry(params, mode) {
         addBranch([0, tierY, 0], midPt, brR0, brR1 * 1.20)
         addBranch(midPt, tipPt, brR1 * 1.10, brR1 * 0.45)
 
-        // Two needle masses per branch — mid and tip
         const nR = leafClusterRadius * (0.65 + taperF * 0.35)
         addLeaf(midPt, nR * 0.82, 0.72 + tier * 0.012, true)
         addLeaf(tipPt, nR,         0.76 + tier * 0.012, true)
       }
 
-      // Detailed mode: short downward sub-branches on lower tiers
       if (isDetailed && t < 0.62) {
         for (let b = 0; b < 3; b++) {
           const angle  = (b / 3) * Math.PI * 2 + tierRot + Math.PI / 5
@@ -160,7 +151,6 @@ function buildGeometry(params, mode) {
       }
     }
 
-    // Tip spire above crown
     addTrunk([0, trunkHeight * 0.88, 0], [0, trunkHeight * 1.07, 0],
              trunkRadiusTop * 0.28, 0.004)
   }
@@ -172,7 +162,6 @@ function buildGeometry(params, mode) {
     const midH = [lean * 0.5, trunkHeight * 0.54, 0]
     const top  = [lean, trunkHeight, 0]
 
-    // Two-segment slightly curved trunk
     addTrunk([0, 0, 0], midH, trunkRadiusBase, trunkRadiusBase * 0.72)
     addTrunk(midH, top, trunkRadiusBase * 0.72, trunkRadiusTop)
 
@@ -190,7 +179,6 @@ function buildGeometry(params, mode) {
       const bX       = Math.sin(angle)
       const bZ       = Math.cos(angle)
 
-      // Arc: rises then falls
       const midFrond = [
         top[0] + bX * frondLen * 0.44,
         top[1] + elevUp * frondLen * 0.44,
@@ -214,11 +202,8 @@ function buildGeometry(params, mode) {
   }
 
   // ── Deciduous / unknown form ────────────────────────────────────────────────
-  // Branching scaffold with leaf clusters at secondary branch tips.
-  // Crown habit tunes attachment height, spread angle, upness, and length variation.
 
   function buildDeciduousForm() {
-    // Per-habit structural tuning
     const HABITS = {
       rounded:         { startT: 0.50, upness: 0.44, spread: 0.85, lenVar: 0.08, gapRate: 0    },
       oval:            { startT: 0.56, upness: 0.53, spread: 0.72, lenVar: 0.05, gapRate: 0    },
@@ -227,7 +212,6 @@ function buildGeometry(params, mode) {
     }
     const h = HABITS[crownHabit] || HABITS.rounded
 
-    // Branch scaffold for multi/forked/single trunk forms
     function growBranches(attachPt, trunkDirArr, pCount, lengthScale) {
       if (isSimple || pCount === 0) return
       const td = new THREE.Vector3(...trunkDirArr)
@@ -308,7 +292,6 @@ function buildGeometry(params, mode) {
       }
 
     } else {
-      // Single trunk — primary branches along upper shaft
       addTrunk([0, 0, 0], [0, trunkHeight, 0], trunkRadiusBase, trunkRadiusTop)
 
       if (!isSimple) {
@@ -348,7 +331,6 @@ function buildGeometry(params, mode) {
       }
     }
 
-    // Canopy filler blobs
     if (isSimple) {
       addLeaf([asymX, canopyYOffset, 0], canopyRadius, 0.88)
     } else {
@@ -374,7 +356,7 @@ function buildGeometry(params, mode) {
   } else if (treeType === 'palm_like') {
     buildPalmForm()
   } else {
-    buildDeciduousForm()  // deciduous_broadleaf and unknown
+    buildDeciduousForm()
   }
 
   const speckles = speckleXYZ.length > 0 ? new Float32Array(speckleXYZ) : null
@@ -394,7 +376,7 @@ function SegMesh({ seg, color, map }) {
 
 // ── ProceduralTree ────────────────────────────────────────────────────────────
 
-function ProceduralTree({ params, mode, barkMap, leafMap }) {
+function ProceduralTree({ params, mode, barkMap, leafMap, leafMasked }) {
   const geo = useMemo(() => buildGeometry(params, mode), [params, mode])
 
   const speckleAttr = useMemo(() => {
@@ -409,7 +391,6 @@ function ProceduralTree({ params, mode, barkMap, leafMap }) {
 
       {geo.leafClusters.map((lc, i) => (
         <mesh key={`l${i}`} position={lc.pos}>
-          {/* Needle masses use fewer segments for a faceted, denser look */}
           <sphereGeometry args={[lc.radius, lc.isConiferNeedle ? 6 : 7, lc.isConiferNeedle ? 4 : 6]} />
           <meshStandardMaterial
             color={leafMap ? '#ffffff' : params.canopyColor}
@@ -417,6 +398,8 @@ function ProceduralTree({ params, mode, barkMap, leafMap }) {
             transparent
             opacity={lc.opacity * Math.min(params.canopyDensity, 1)}
             map={leafMap || null}
+            alphaTest={leafMasked ? 0.35 : 0}
+            depthWrite={!leafMasked}
           />
         </mesh>
       ))}
@@ -448,6 +431,10 @@ const TYPE_LABEL = {
   palm_like:           'palm',
 }
 
+function isDataUrl(url) {
+  return typeof url === 'string' && url.startsWith('data:image')
+}
+
 export default function TreePreview() {
   const {
     estimates, treeStructureHints,
@@ -456,29 +443,68 @@ export default function TreePreview() {
     previewMode, setPreviewMode, setStep,
   } = useTreeSession()
 
-  const [barkMap, setBarkMap] = useState(null)
-  const [leafMap, setLeafMap] = useState(null)
+  const [barkMap, setBarkMap]     = useState(null)
+  const [leafMap, setLeafMap]     = useState(null)
+  const [leafMasked, setLeafMasked] = useState(false)
+  const [skipTextures, setSkipTextures] = useState(false)
+  const [texErrors, setTexErrors] = useState(0)
 
-  const barkUrl = textureSamples?.bark?.dataUrl ?? null
-  const leafUrl = textureSamples?.leaf?.dataUrl ?? textureSamples?.canopy?.dataUrl ?? null
+  // Validate sample before reading URLs
+  const barkSample  = textureSamples?.bark
+  const leafSample  = textureSamples?.leaf ?? textureSamples?.canopy
+
+  const barkUrl = isDataUrl(barkSample?.dataUrl) ? barkSample.dataUrl : null
+
+  const leafUrl = (() => {
+    if (!leafSample) return null
+    // Prefer masked PNG (has proper alpha) over original JPEG
+    const url = leafSample.dataUrl
+    return isDataUrl(url) ? url : null
+  })()
+
+  // Detect if the leaf dataUrl is a masked PNG (transparent)
+  const isMaskedPng = typeof leafUrl === 'string' && leafUrl.startsWith('data:image/png')
 
   useEffect(() => {
-    if (!barkUrl) { setBarkMap(null); return }
-    const tex = new THREE.TextureLoader().load(barkUrl)
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping
-    tex.repeat.set(3, 2)
-    setBarkMap(tex)
-    return () => tex.dispose()
-  }, [barkUrl])
+    if (skipTextures || !barkUrl) { setBarkMap(null); return }
+    let cancelled = false
+    let loaded = null
+    loadTextureSafe(barkUrl, { textureType: 'bark', repeat: [3, 2] }).then((tex) => {
+      if (cancelled) { tex?.dispose(); return }
+      loaded = tex
+      if (!tex) setTexErrors((n) => n + 1)
+      setBarkMap(tex)
+    })
+    return () => {
+      cancelled = true
+      loaded?.dispose()
+      setBarkMap(null)
+    }
+  }, [barkUrl, skipTextures])
 
   useEffect(() => {
-    if (!leafUrl) { setLeafMap(null); return }
-    const tex = new THREE.TextureLoader().load(leafUrl)
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping
-    tex.repeat.set(2, 2)
-    setLeafMap(tex)
-    return () => tex.dispose()
-  }, [leafUrl])
+    if (skipTextures || !leafUrl) { setLeafMap(null); setLeafMasked(false); return }
+    let cancelled = false
+    let loaded = null
+    loadTextureSafe(leafUrl, {
+      textureType: 'leaf',
+      wrapS: isMaskedPng ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping,
+      wrapT: isMaskedPng ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping,
+      repeat: isMaskedPng ? undefined : [2, 2],
+    }).then((tex) => {
+      if (cancelled) { tex?.dispose(); return }
+      loaded = tex
+      if (!tex) setTexErrors((n) => n + 1)
+      setLeafMap(tex)
+      setLeafMasked(isMaskedPng && !!tex)
+    })
+    return () => {
+      cancelled = true
+      loaded?.dispose()
+      setLeafMap(null)
+      setLeafMasked(false)
+    }
+  }, [leafUrl, skipTextures, isMaskedPng])
 
   const params = useMemo(
     () => buildTreeModelParams(
@@ -515,17 +541,35 @@ export default function TreePreview() {
           ))}
         </div>
 
-        <div className="canvas-wrap">
-          <Canvas camera={{ position: [1.8, 1.2, 1.8], fov: 45 }} gl={{ antialias: true, alpha: true }}>
-            <ambientLight intensity={0.5} />
-            <directionalLight position={[3, 6, 4]} intensity={1.2} />
-            <directionalLight position={[-3, 2, -2]} intensity={0.3} />
-            <Suspense fallback={null}>
-              <ProceduralTree params={params} mode={previewMode} barkMap={barkMap} leafMap={leafMap} />
-            </Suspense>
-            <OrbitControls enablePan={false} minDistance={0.8} maxDistance={6} />
-          </Canvas>
-        </div>
+        <PreviewErrorBoundary onSkipTextures={() => setSkipTextures(true)}>
+          <div className="canvas-wrap">
+            <Canvas camera={{ position: [1.8, 1.2, 1.8], fov: 45 }} gl={{ antialias: true, alpha: true }}>
+              <ambientLight intensity={0.5} />
+              <directionalLight position={[3, 6, 4]} intensity={1.2} />
+              <directionalLight position={[-3, 2, -2]} intensity={0.3} />
+              <Suspense fallback={null}>
+                <ProceduralTree
+                  params={params}
+                  mode={previewMode}
+                  barkMap={barkMap}
+                  leafMap={leafMap}
+                  leafMasked={leafMasked}
+                />
+              </Suspense>
+              <OrbitControls enablePan={false} minDistance={0.8} maxDistance={6} />
+            </Canvas>
+          </div>
+        </PreviewErrorBoundary>
+
+        {SHOW_DEBUG && (
+          <div className="preview-diagnostics">
+            <span>bark: {barkUrl ? (barkMap ? 'loaded' : 'loading…') : '—'}</span>
+            <span>leaf: {leafUrl ? (leafMap ? (leafMasked ? 'masked' : 'loaded') : 'loading…') : '—'}</span>
+            <span>canopy: {textureSamples?.canopy ? 'applied' : '—'}</span>
+            {texErrors > 0 && <span className="diag-error">{texErrors} error(s)</span>}
+            {skipTextures && <span className="diag-error">textures skipped</span>}
+          </div>
+        )}
 
         <div className="material-inputs">
           {(['bark', 'leaf', 'canopy']).map((t) => (
