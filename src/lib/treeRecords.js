@@ -79,7 +79,7 @@ export async function saveCurrentTree(state) {
     ? `${species} — ${new Date().toLocaleDateString()}`
     : `Tree — ${new Date().toLocaleDateString()}`
 
-  const proceduralParams = estimates
+  const modelParams = estimates
     ? buildTreeModelParams(estimates, treeStructureHints)
     : null
 
@@ -89,14 +89,29 @@ export async function saveCurrentTree(state) {
       user_id: user.id,
       name,
       species,
-      estimates,
-      landmarks,
+      // Scalar fields
+      common_name: speciesAIResult?.common_name ?? null,
+      scientific_name: speciesAIResult?.scientific_name ?? null,
+      species_confidence: estimates?.species_confidence ?? null,
+      health_status: estimates?.health_status ?? null,
+      health_confidence: estimates?.health_confidence ?? null,
+      dbh_in: estimates?.dbh_in ?? null,
+      height_ft: estimates?.height_ft ?? null,
+      canopy_width_ft: estimates?.canopy_width_ft ?? null,
+      age_class: estimates?.age_class ?? null,
+      lat: photos[0]?.exif?.gps?.lat ?? null,
+      lng: photos[0]?.exif?.gps?.lng ?? null,
+      observed_at: photos[0]?.exif?.datetime ?? null,
+      notes: null,
+      // JSONB columns (app key -> db column)
+      estimate_data: estimates,
+      landmark_data: landmarks,
       user_hints: userHints,
-      tree_structure_hints: treeStructureHints,
+      structure_hints: treeStructureHints,
       scale_real_world_dist: scaleRealWorldDist,
-      species_ai_result: speciesAIResult,
+      ai_results: speciesAIResult,
       structure_detection_result: structureDetectionResult,
-      procedural_params: proceduralParams,
+      model_params: modelParams,
       preview_mode: previewMode,
     })
     .select()
@@ -166,11 +181,11 @@ export async function listMyTrees() {
   requireSupabase()
   const { data, error } = await supabase
     .from('g2tree_trees')
-    .select('id, name, species, created_at, estimates')
+    .select('id, name, species, created_at, estimate_data')
     .order('created_at', { ascending: false })
 
   if (error) throw error
-  return data ?? []
+  return (data ?? []).map(({ estimate_data, ...row }) => ({ ...row, estimates: estimate_data }))
 }
 
 /**
@@ -210,7 +225,17 @@ export async function loadTree(id) {
     }
   }
 
-  return { tree, photos }
+  // Remap db column names back to app state keys
+  const mappedTree = {
+    ...tree,
+    landmarks: tree.landmark_data,
+    estimates: tree.estimate_data,
+    treeStructureHints: tree.structure_hints,
+    modelParams: tree.model_params,
+    speciesAIResult: tree.ai_results,
+  }
+
+  return { tree: mappedTree, photos }
 }
 
 /**
