@@ -36,11 +36,18 @@ function buildExportPayload({
     image_normalization_notes: speciesAIResult?.notes?.filter((n) => n.includes('Converted')) ?? [],
     procedural_params:         buildTreeModelParams(estimates, treeStructureHints),
     procedural_complexity_mode: previewMode,
-    texture_samples: textureSamples ? {
-      bark:   textureSamples.bark   ? { has_sample: true, crop_rect: textureSamples.bark.cropRect }   : null,
-      leaf:   textureSamples.leaf   ? { has_sample: true, crop_rect: textureSamples.leaf.cropRect }   : null,
-      canopy: textureSamples.canopy ? { has_sample: true, crop_rect: textureSamples.canopy.cropRect } : null,
-    } : null,
+    texture_samples: textureSamples ? Object.fromEntries(
+      ['bark', 'leaf', 'canopy'].map((t) => {
+        const s = textureSamples[t]
+        return [t, s ? {
+          has_sample:     true,
+          average_color:  s.averageColor,
+          dominant_colors: s.dominantColors,
+          dimensions:     { width: s.width, height: s.height },
+          created_at:     s.createdAt,
+        } : null]
+      })
+    ) : null,
   }
 }
 

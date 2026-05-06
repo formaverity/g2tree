@@ -79,17 +79,32 @@ export async function saveCurrentTree(state) {
   const { data: { user }, error: userError } = await supabase.auth.getUser()
   if (userError || !user) throw new Error('Not signed in')
 
-  const { photos, textureSamples } = state
+  const { photos, textureSamples, currentTreeId } = state
 
   const payload = buildTreeInsertPayload(state, user.id)
 
-  const { data: tree, error: treeError } = await supabase
-    .from('g2tree_trees')
-    .insert(payload)
-    .select()
-    .single()
-
-  if (treeError) throw treeError
+  let tree
+  if (currentTreeId) {
+    // Update the existing record — strip user_id since it's immutable
+    const { user_id: _, ...updatePayload } = payload
+    const { data, error: treeError } = await supabase
+      .from('g2tree_trees')
+      .update(updatePayload)
+      .eq('id', currentTreeId)
+      .eq('user_id', user.id)
+      .select()
+      .single()
+    if (treeError) throw treeError
+    tree = data
+  } else {
+    const { data, error: treeError } = await supabase
+      .from('g2tree_trees')
+      .insert(payload)
+      .select()
+      .single()
+    if (treeError) throw treeError
+    tree = data
+  }
 
   // Upload each photo (best-effort — failures are logged, not thrown)
   for (let i = 0; i < photos.length; i++) {

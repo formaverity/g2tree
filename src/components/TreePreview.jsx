@@ -459,8 +459,8 @@ export default function TreePreview() {
   const [barkMap, setBarkMap] = useState(null)
   const [leafMap, setLeafMap] = useState(null)
 
-  const barkUrl = textureSamples?.bark?.url ?? null
-  const leafUrl = textureSamples?.leaf?.url ?? textureSamples?.canopy?.url ?? null
+  const barkUrl = textureSamples?.bark?.dataUrl ?? null
+  const leafUrl = textureSamples?.leaf?.dataUrl ?? textureSamples?.canopy?.dataUrl ?? null
 
   useEffect(() => {
     if (!barkUrl) { setBarkMap(null); return }
@@ -481,11 +481,16 @@ export default function TreePreview() {
   }, [leafUrl])
 
   const params = useMemo(
-    () => buildTreeModelParams(estimates, treeStructureHints, {
-      scientificName: speciesAIResult?.scientific_name ?? '',
-      commonName:     speciesAIResult?.common_name ?? userHints?.known_species ?? '',
-    }),
-    [estimates, treeStructureHints, speciesAIResult, userHints],
+    () => buildTreeModelParams(
+      estimates,
+      treeStructureHints,
+      {
+        scientificName: speciesAIResult?.scientific_name ?? '',
+        commonName:     speciesAIResult?.common_name ?? userHints?.known_species ?? '',
+      },
+      textureSamples,
+    ),
+    [estimates, treeStructureHints, speciesAIResult, userHints, textureSamples],
   )
 
   return (
@@ -520,6 +525,14 @@ export default function TreePreview() {
             </Suspense>
             <OrbitControls enablePan={false} minDistance={0.8} maxDistance={6} />
           </Canvas>
+        </div>
+
+        <div className="material-inputs">
+          {(['bark', 'leaf', 'canopy']).map((t) => (
+            <span key={t} className={`material-input-tag${textureSamples?.[t] ? ' applied' : ''}`}>
+              {t}: {textureSamples?.[t] ? 'applied' : 'not sampled'}
+            </span>
+          ))}
         </div>
 
         <div className="tree-stats-mini">

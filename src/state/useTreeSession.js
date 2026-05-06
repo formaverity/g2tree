@@ -13,20 +13,118 @@ const DEFAULT_LANDMARKS = {
   scale_b:      { x: 0.3,  y: 0.9  },
 }
 
+const DEFAULT_USER_HINTS = {
+  known_dbh_in: '',
+  known_height_ft: '',
+  known_species: '',
+  site_type: '',
+  photo_distance_hint: 'unknown',
+}
+
+const DEFAULT_STRUCTURE_HINTS = {
+  trunkForm: 'unknown',
+  trunkCount: 1,
+  branchDensity: 'medium',
+  canopyDistribution: 'medium',
+  leafDistribution: 'clustered',
+  detectedStructureConfidence: 0,
+}
+
 const useTreeSession = create((set, get) => ({
   // Auth session (populated by supabase.auth.onAuthStateChange in App)
   session: null,
   setSession: (session) => set({ session }),
 
+  // View routing: 'home' shows the home page, 'workflow' shows the step-based flow
+  view: 'home',
+  setView: (view) => set({ view }),
+
   // Step management
-  // profile is outside the main workflow — handled by StepHeader profile button
-  step: 'capture', // capture | review | calibrate | estimate | preview | export | profile
-  returnStep: 'capture', // step to return to when leaving profile
+  step: 'capture',
+  returnStep: 'capture',
   setStep: (step) => set({ step }),
   setReturnStep: (step) => set({ returnStep: step }),
 
+  // Save lifecycle
+  currentTreeId: null,
+  isSaved: false,
+  hasUnsavedChanges: false,
+  lastSavedAt: null,
+
+  markSaved: (id) => set({
+    currentTreeId: id,
+    isSaved: true,
+    hasUnsavedChanges: false,
+    lastSavedAt: new Date().toISOString(),
+  }),
+
+  // Clear all tree data and return to blank capture state.
+  // Does NOT delete any saved DB record — the record persists in Supabase.
+  resetSession: () => {
+    const { photos, textureSamples } = get()
+    photos.forEach((p) => { if (p.url?.startsWith('blob:')) URL.revokeObjectURL(p.url) })
+    Object.values(textureSamples).forEach((s) => {
+      if (s?.url?.startsWith('blob:')) URL.revokeObjectURL(s.url)
+    })
+    set({
+      photos: [],
+      landmarks: { ...DEFAULT_LANDMARKS },
+      showScaleRef: false,
+      scaleRealWorldDist: 1.0,
+      userHints: { ...DEFAULT_USER_HINTS },
+      estimates: null,
+      speciesAIResult: null,
+      treeStructureHints: { ...DEFAULT_STRUCTURE_HINTS },
+      structureDetectionResult: null,
+      previewMode: isMobile ? 'simple' : 'structured',
+      textureSamples: { bark: null, leaf: null, canopy: null },
+      currentTreeId: null,
+      isSaved: false,
+      hasUnsavedChanges: false,
+      lastSavedAt: null,
+      step: 'capture',
+    })
+  },
+
+  // Reset session then navigate to the workflow capture step.
+  startNewTree: () => {
+    get().resetSession()
+    set({ view: 'workflow' })
+  },
+
+  // Restore all session state from a loaded tree record in one atomic update.
+  // Sets isSaved=true / hasUnsavedChanges=false so no dirty modal triggers.
+  restoreSession: ({
+    photos = [],
+    estimates = null,
+    landmarks,
+    userHints,
+    treeStructureHints,
+    speciesAIResult = null,
+    structureDetectionResult = null,
+    previewMode,
+    id,
+  }) => {
+    set({
+      photos,
+      estimates,
+      landmarks: landmarks ?? { ...DEFAULT_LANDMARKS },
+      userHints: userHints ?? { ...DEFAULT_USER_HINTS },
+      treeStructureHints: treeStructureHints ?? { ...DEFAULT_STRUCTURE_HINTS },
+      speciesAIResult,
+      structureDetectionResult,
+      previewMode: previewMode ?? (isMobile ? 'simple' : 'structured'),
+      currentTreeId: id,
+      isSaved: true,
+      hasUnsavedChanges: false,
+      lastSavedAt: new Date().toISOString(),
+      step: 'estimate',
+      view: 'workflow',
+    })
+  },
+
   // Photos
-  photos: [], // [{ id, url, file, exif }]
+  photos: [],
   addPhotos: (files) => {
     const newPhotos = files.map((file) => ({
       id: crypto.randomUUID(),
@@ -34,80 +132,64 @@ const useTreeSession = create((set, get) => ({
       file,
       exif: null,
     }))
-    set((s) => ({ photos: [...s.photos, ...newPhotos] }))
+    set((s) => ({ photos: [...s.photos, ...newPhotos], hasUnsavedChanges: true, isSaved: false }))
   },
-  // Used when restoring saved trees (photos arrive as { id, url, file: null, exif })
   setPhotos: (photos) => set({ photos }),
   removePhoto: (id) => {
     const photo = get().photos.find((p) => p.id === id)
-    if (photo) URL.revokeObjectURL(photo.url)
-    set((s) => ({ photos: s.photos.filter((p) => p.id !== id) }))
+    if (photo?.url?.startsWith('blob:')) URL.revokeObjectURL(photo.url)
+    set((s) => ({ photos: s.photos.filter((p) => p.id !== id), hasUnsavedChanges: true, isSaved: false }))
   },
   setPhotoExif: (id, exif) =>
-    set((s) => ({
-      photos: s.photos.map((p) => (p.id === id ? { ...p, exif } : p)),
-    })),
+    set((s) => ({ photos: s.photos.map((p) => (p.id === id ? { ...p, exif } : p)) })),
 
   // Landmarks (normalized 0-1 coords relative to first image)
   landmarks: { ...DEFAULT_LANDMARKS },
   setLandmark: (key, pos) =>
-    set((s) => ({ landmarks: { ...s.landmarks, [key]: pos } })),
+    set((s) => ({ landmarks: { ...s.landmarks, [key]: pos }, hasUnsavedChanges: true, isSaved: false })),
   resetLandmarks: () => set({ landmarks: { ...DEFAULT_LANDMARKS } }),
 
   // Scale reference
   showScaleRef: false,
   toggleScaleRef: () => set((s) => ({ showScaleRef: !s.showScaleRef })),
-  scaleRealWorldDist: 1.0, // meters
-  setScaleRealWorldDist: (v) => set({ scaleRealWorldDist: v }),
+  scaleRealWorldDist: 1.0,
+  setScaleRealWorldDist: (v) => set({ scaleRealWorldDist: v, hasUnsavedChanges: true, isSaved: false }),
 
   // Optional field hints that improve estimation accuracy
-  userHints: {
-    known_dbh_in: '',
-    known_height_ft: '',
-    known_species: '',
-    site_type: '',
-    photo_distance_hint: 'unknown', // close_trunk | full_tree | base_looking_up | unknown
-  },
+  userHints: { ...DEFAULT_USER_HINTS },
   setUserHints: (partial) =>
-    set((s) => ({ userHints: { ...s.userHints, ...partial } })),
+    set((s) => ({ userHints: { ...s.userHints, ...partial }, hasUnsavedChanges: true, isSaved: false })),
   setUserHint: (key, value) =>
-    set((s) => ({ userHints: { ...s.userHints, [key]: value } })),
+    set((s) => ({ userHints: { ...s.userHints, [key]: value }, hasUnsavedChanges: true, isSaved: false })),
 
   // Estimates
   estimates: null,
-  setEstimates: (estimates) => set({ estimates }),
+  setEstimates: (estimates) => set({ estimates, hasUnsavedChanges: true, isSaved: false }),
 
   // Species AI result (persisted across panel re-renders)
   speciesAIResult: null,
-  setSpeciesAIResult: (result) => set({ speciesAIResult: result }),
+  setSpeciesAIResult: (result) => set({ speciesAIResult: result, hasUnsavedChanges: true, isSaved: false }),
 
   // Tree structure hints for procedural model
-  treeStructureHints: {
-    trunkForm: 'unknown',            // single | forked | multi | unknown
-    trunkCount: 1,
-    branchDensity: 'medium',         // low | medium | high
-    canopyDistribution: 'medium',    // sparse | medium | dense | asymmetric
-    leafDistribution: 'clustered',   // outer_shell | clustered | even | sparse
-    detectedStructureConfidence: 0,
-  },
+  treeStructureHints: { ...DEFAULT_STRUCTURE_HINTS },
   setTreeStructureHint: (key, value) =>
-    set((s) => ({ treeStructureHints: { ...s.treeStructureHints, [key]: value } })),
+    set((s) => ({ treeStructureHints: { ...s.treeStructureHints, [key]: value }, hasUnsavedChanges: true, isSaved: false })),
 
   // Structure detection result
   structureDetectionResult: null,
-  setStructureDetectionResult: (r) => set({ structureDetectionResult: r }),
+  setStructureDetectionResult: (r) => set({ structureDetectionResult: r, hasUnsavedChanges: true, isSaved: false }),
 
   // Preview mode — structured on desktop, simple on mobile
-  previewMode: isMobile ? 'simple' : 'structured', // simple | structured | detailed
+  previewMode: isMobile ? 'simple' : 'structured',
   setPreviewMode: (mode) => set({ previewMode: mode }),
 
   // Texture samples cropped from field photos
   textureSamples: { bark: null, leaf: null, canopy: null },
   setTextureSample: (type, sample) =>
-    set((s) => ({ textureSamples: { ...s.textureSamples, [type]: sample } })),
+    set((s) => ({ textureSamples: { ...s.textureSamples, [type]: sample }, hasUnsavedChanges: true, isSaved: false })),
   clearTextureSample: (type) => {
     const url = get().textureSamples[type]?.url
-    if (url) URL.revokeObjectURL(url)
+    if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
     set((s) => ({ textureSamples: { ...s.textureSamples, [type]: null } }))
   },
 }))

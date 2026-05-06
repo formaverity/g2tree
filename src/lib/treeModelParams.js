@@ -72,8 +72,9 @@ function inferCrownHabit(genus, treeType, canopyDistribution) {
  * @param {object} estimates
  * @param {object} [treeStructureHints]
  * @param {object} [speciesInfo]  { scientificName?, commonName? }
+ * @param {object} [textureSamples]  { bark?, leaf?, canopy? } — from TextureSampler
  */
-export function buildTreeModelParams(estimates, treeStructureHints = {}, speciesInfo = {}) {
+export function buildTreeModelParams(estimates, treeStructureHints = {}, speciesInfo = {}, textureSamples = {}) {
   const {
     height_ft       = 30,
     canopy_width_ft = 20,
@@ -164,8 +165,11 @@ export function buildTreeModelParams(estimates, treeStructureHints = {}, species
     health_status === 'poor' ? 0.36 :
     health_status === 'fair' ? 0.12 : 0
 
-  // ── Canopy colour by type × health ───────────────────────────────────────
-  const canopyColor = (() => {
+  const barkSample = textureSamples?.bark
+  const leafSample = textureSamples?.leaf ?? textureSamples?.canopy
+
+  // ── Canopy colour by type × health (overridden by texture sample if present) ─
+  const canopyColorBase = (() => {
     if (treeType === 'conifer') {
       return health_status === 'good' ? '#2a5c38' :
              health_status === 'fair' ? '#4a6830' :
@@ -180,9 +184,7 @@ export function buildTreeModelParams(estimates, treeStructureHints = {}, species
            health_status === 'fair' ? '#6b8c3e' :
            health_status === 'poor' ? '#8c7a3e' : '#4a7a52'
   })()
-
-  // Conifers have darker, redder-brown bark
-  const trunkColor = treeType === 'conifer' ? '#4a3828' : '#5c4033'
+  const canopyColor = leafSample?.averageColor ?? canopyColorBase
 
   // ── Architecture descriptors (output for schema + rendering) ─────────────
   const trunkArchitecture =

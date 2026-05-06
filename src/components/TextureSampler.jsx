@@ -1,113 +1,202 @@
-import { useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, Scissors, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  ChevronDown, ChevronUp, Scissors,
+  ZoomIn, ZoomOut, RefreshCw, Move, Crop, Check, X,
+} from 'lucide-react'
 import useTreeSession from '../state/useTreeSession'
+import { cropTextureSample } from '../lib/textureSampling'
 
-const SAMPLE_TYPES = ['bark', 'leaf', 'canopy']
+const TYPES = ['bark', 'leaf', 'canopy']
 
-async function cropImageToBlob(imgEl, containerEl, cropRect) {
-  const rect = containerEl.getBoundingClientRect()
-  const sf = imgEl.naturalWidth / rect.width
-  const sx = Math.max(0, cropRect.x * sf)
-  const sy = Math.max(0, cropRect.y * sf)
-  const sw = Math.min(cropRect.w * sf, imgEl.naturalWidth - sx)
-  const sh = Math.min(cropRect.h * sf, imgEl.naturalHeight - sy)
-  if (sw < 4 || sh < 4) return null
-  const canvas = document.createElement('canvas')
-  canvas.width = 256
-  canvas.height = 256
-  canvas.getContext('2d').drawImage(imgEl, sx, sy, sw, sh, 0, 0, 256, 256)
-  return new Promise((resolve) => {
-    canvas.toBlob((blob) => resolve(blob ?? null), 'image/jpeg', 0.88)
-  })
+// ── View-transform helpers ────────────────────────────────────────────────────
+
+function calcFit(nw, nh, cw, ch) {
+  const scale = Math.min(cw / nw, ch / nh)
+  return { scale, tx: (cw - nw * scale) / 2, ty: (ch - nh * scale) / 2 }
 }
+
+const MIN_RATIO = 0.75
+const MAX_RATIO = 5.0
+
+// ── TextureSampler ────────────────────────────────────────────────────────────
 
 export default function TextureSampler() {
   const { photos, textureSamples, setTextureSample, clearTextureSample } = useTreeSession()
-  const [open, setOpen] = useState(false)
+
+  const [open, setOpen]             = useState(false)
   const [activeType, setActiveType] = useState('bark')
-  const [selectedPhotoIdx, setSelectedPhotoIdx] = useState(0)
-  const [cropStart, setCropStart] = useState(null)
-  const [cropEnd, setCropEnd] = useState(null)
-  const [cropping, setCropping] = useState(false)
+  const [photoIdx, setPhotoIdx]     = useState(0)
+  const [mode, setMode]             = useState('pan')   // 'pan' | 'crop'
+
+  // Viewport transform — { scale, tx, ty } where tx/ty are container px offsets
+  const [transform, setTransform]   = useState(null)
+  const [fitT, setFitT]             = useState(null)
+  const [natSize, setNatSize]       = useState(null)    // { nw, nh }
+
+  // Drag state (container px, live while pointer is held)
+  const [dragStart, setDragStart]   = useState(null)
+  const [dragEnd, setDragEnd]       = useState(null)
+
+  // Committed sample box (image px) + auto-generated preview
+  const [pendingRect, setPendingRect] = useState(null)
+  const [preview, setPreview]         = useState(null)
+  const [generating, setGenerating]   = useState(false)
+  const [appliedMsg, setAppliedMsg]   = useState(null)
+
   const containerRef = useRef(null)
-  const imgRef = useRef(null)
-  const draggingRef = useRef(false)
+  const pointerRef   = useRef({ down: false, lastX: 0, lastY: 0 })
 
-  const photo = photos[selectedPhotoIdx] ?? photos[0] ?? null
+  const photo = photos[photoIdx] ?? photos[0] ?? null
 
-  function getRelCoords(e) {
+  // Reset viewport whenever the selected photo changes
+  useEffect(() => {
+    setNatSize(null)
+    setTransform(null)
+    setFitT(null)
+    setPendingRect(null)
+    setDragStart(null)
+    setDragEnd(null)
+    setPreview(null)
+  }, [photo?.id])
+
+  function handleImageLoad(e) {
+    const nw = e.target.naturalWidth
+    const nh = e.target.naturalHeight
+    if (!containerRef.current || nw === 0 || nh === 0) return
+    const r   = containerRef.current.getBoundingClientRect()
+    const fit = calcFit(nw, nh, r.width, r.height)
+    setNatSize({ nw, nh })
+    setFitT(fit)
+    setTransform(fit)
+  }
+
+  function resetView() {
+    if (!containerRef.current || !natSize) return
+    const r   = containerRef.current.getBoundingClientRect()
+    const fit = calcFit(natSize.nw, natSize.nh, r.width, r.height)
+    setFitT(fit)
+    setTransform(fit)
+  }
+
+  function zoomBy(factor) {
+    if (!transform || !fitT || !containerRef.current) return
+    const r  = containerRef.current.getBoundingClientRect()
+    const cx = r.width / 2
+    const cy = r.height / 2
+    setTransform((t) => {
+      const minS = fitT.scale * MIN_RATIO
+      const maxS = fitT.scale * MAX_RATIO
+      const ns   = Math.min(maxS, Math.max(minS, t.scale * factor))
+      return {
+        scale: ns,
+        tx:    cx - (cx - t.tx) * (ns / t.scale),
+        ty:    cy - (cy - t.ty) * (ns / t.scale),
+      }
+    })
+  }
+
+  // ── Pointer events ──────────────────────────────────────────────────────────
+
+  function getCC(e) {
     const r = containerRef.current.getBoundingClientRect()
-    return {
-      x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
-      y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
-    }
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
 
   function handlePointerDown(e) {
+    if (e.button !== 0 && e.pointerType === 'mouse') return
     e.preventDefault()
     e.currentTarget.setPointerCapture(e.pointerId)
-    draggingRef.current = true
-    const c = getRelCoords(e)
-    setCropStart(c)
-    setCropEnd(c)
-  }
-
-  function handlePointerMove(e) {
-    if (!draggingRef.current) return
-    e.preventDefault()
-    setCropEnd(getRelCoords(e))
-  }
-
-  async function handlePointerUp(e) {
-    if (!draggingRef.current) return
-    e.currentTarget.releasePointerCapture(e.pointerId)
-    draggingRef.current = false
-    const end = getRelCoords(e)
-    setCropEnd(end)
-
-    const start = cropStart
-    if (!start || !imgRef.current || !containerRef.current) return
-
-    const rx = Math.min(start.x, end.x)
-    const ry = Math.min(start.y, end.y)
-    const rw = Math.abs(end.x - start.x)
-    const rh = Math.abs(end.y - start.y)
-
-    if (rw < 0.02 || rh < 0.02) { setCropStart(null); setCropEnd(null); return }
-
-    setCropping(true)
-    try {
-      const blob = await cropImageToBlob(imgRef.current, containerRef.current, { x: rx, y: ry, w: rw, h: rh })
-      if (blob) {
-        const url = URL.createObjectURL(blob)
-        setTextureSample(activeType, {
-          url,
-          blob,
-          sourcePhotoId: photo?.id ?? null,
-          cropRect: { x: rx, y: ry, w: rw, h: rh },
-        })
-      }
-    } finally {
-      setCropping(false)
-      setCropStart(null)
-      setCropEnd(null)
+    const { x, y } = getCC(e)
+    pointerRef.current = { down: true, lastX: x, lastY: y }
+    if (mode === 'crop') {
+      setDragStart({ x, y })
+      setDragEnd({ x, y })
+      setPendingRect(null)
+      setPreview(null)
     }
   }
 
-  const cropRect = (cropStart && cropEnd) ? {
-    x: Math.min(cropStart.x, cropEnd.x),
-    y: Math.min(cropStart.y, cropEnd.y),
-    w: Math.abs(cropEnd.x - cropStart.x),
-    h: Math.abs(cropEnd.y - cropStart.y),
+  function handlePointerMove(e) {
+    if (!pointerRef.current.down) return
+    const { x, y } = getCC(e)
+    if (mode === 'pan') {
+      const dx = x - pointerRef.current.lastX
+      const dy = y - pointerRef.current.lastY
+      setTransform((t) => t ? { ...t, tx: t.tx + dx, ty: t.ty + dy } : t)
+    } else {
+      setDragEnd({ x, y })
+    }
+    pointerRef.current.lastX = x
+    pointerRef.current.lastY = y
+  }
+
+  async function handlePointerUp(e) {
+    if (!pointerRef.current.down) return
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    pointerRef.current.down = false
+
+    if (mode !== 'crop' || !dragStart || !dragEnd || !transform || !natSize) return
+
+    const { tx, ty, scale } = transform
+    const toImg = (cx, cy) => ({ x: (cx - tx) / scale, y: (cy - ty) / scale })
+    const a = toImg(dragStart.x, dragStart.y)
+    const b = toImg(dragEnd.x,   dragEnd.y)
+
+    const ix = Math.max(0, Math.min(a.x, b.x))
+    const iy = Math.max(0, Math.min(a.y, b.y))
+    const iw = Math.min(natSize.nw - ix, Math.abs(b.x - a.x))
+    const ih = Math.min(natSize.nh - iy, Math.abs(b.y - a.y))
+
+    setDragStart(null)
+    setDragEnd(null)
+
+    if (iw < 4 || ih < 4) return
+
+    setPendingRect({ x: ix, y: iy, w: iw, h: ih })
+    setGenerating(true)
+    try {
+      const result = await cropTextureSample(photo.url, ix, iy, iw, ih, activeType)
+      if (result) setPreview(result)
+    } catch (err) {
+      console.warn('Texture crop failed:', err)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  // ── Apply / clear ───────────────────────────────────────────────────────────
+
+  function handleApply() {
+    if (!preview) return
+    setTextureSample(activeType, preview)
+    setAppliedMsg(`${activeType.charAt(0).toUpperCase() + activeType.slice(1)} sample applied to clone`)
+    setPreview(null)
+    setPendingRect(null)
+    setMode('pan')
+    setTimeout(() => setAppliedMsg(null), 3000)
+  }
+
+  function handleClear(type) {
+    clearTextureSample(type)
+  }
+
+  // ── Derived display values ──────────────────────────────────────────────────
+
+  // Live drag rectangle (container px)
+  const liveRect = dragStart && dragEnd ? {
+    left:   Math.min(dragStart.x, dragEnd.x),
+    top:    Math.min(dragStart.y, dragEnd.y),
+    width:  Math.abs(dragEnd.x  - dragStart.x),
+    height: Math.abs(dragEnd.y  - dragStart.y),
   } : null
 
-  // TODO: Future — fetch reference textures from GBIF media API:
-  //   https://api.gbif.org/v1/species/{key}/media
-  //   Requires GBIF species key from speciesAIResult (lookup by scientificName)
-
-  // TODO: Future — fetch observation photos from iNaturalist for texture references:
-  //   https://api.inaturalist.org/v1/observations
-  //   Filter by taxon_name and quality_grade=research
+  // Committed box projected back to container px for persistent display
+  const committedRect = pendingRect && transform ? {
+    left:   pendingRect.x * transform.scale + transform.tx,
+    top:    pendingRect.y * transform.scale + transform.ty,
+    width:  pendingRect.w * transform.scale,
+    height: pendingRect.h * transform.scale,
+  } : null
 
   if (photos.length === 0) return null
 
@@ -116,21 +205,23 @@ export default function TextureSampler() {
       <button className="hints-toggle" onClick={() => setOpen((o) => !o)}>
         <Scissors size={14} />
         Texture samples
+        {TYPES.some((t) => textureSamples[t]) && <span className="texture-dot" />}
         {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
       </button>
 
       {open && (
-        <div className="hints-body">
+        <div className="hints-body texture-sampler-body">
           <p className="hints-desc">
-            Draw a rectangle on the photo to save a bark, leaf, or canopy texture sample.
+            Pan and zoom the photo, then draw a sample box for bark, leaf, or canopy.
           </p>
 
+          {/* Sample type selector */}
           <div className="texture-type-tabs">
-            {SAMPLE_TYPES.map((t) => (
+            {TYPES.map((t) => (
               <button
                 key={t}
                 className={`texture-type-btn${activeType === t ? ' active' : ''}`}
-                onClick={() => setActiveType(t)}
+                onClick={() => { setActiveType(t); setPreview(null); setPendingRect(null) }}
               >
                 {t}
                 {textureSamples[t] && <span className="texture-dot" />}
@@ -138,64 +229,189 @@ export default function TextureSampler() {
             ))}
           </div>
 
+          {/* Photo thumbnail selector */}
           {photos.length > 1 && (
-            <div className="texture-photo-selector">
-              <div className="texture-photo-thumbs">
-                {photos.map((p, i) => (
-                  <button
-                    key={p.id}
-                    className={`texture-photo-thumb${selectedPhotoIdx === i ? ' active' : ''}`}
-                    onClick={() => setSelectedPhotoIdx(i)}
-                  >
-                    <img src={p.url} alt={`Photo ${i + 1}`} />
-                  </button>
-                ))}
+            <div className="texture-photo-thumbs">
+              {photos.map((p, i) => (
+                <button
+                  key={p.id}
+                  className={`texture-photo-thumb${photoIdx === i ? ' active' : ''}`}
+                  onClick={() => setPhotoIdx(i)}
+                >
+                  <img src={p.url} alt={`Photo ${i + 1}`} />
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Viewport toolbar */}
+          <div className="texture-toolbar">
+            <div className="texture-toolbar-left">
+              <button
+                className={`btn-icon texture-mode-btn${mode === 'pan' ? ' active' : ''}`}
+                onClick={() => { setMode('pan'); setDragStart(null); setDragEnd(null) }}
+                title="Pan mode — drag to move"
+              >
+                <Move size={13} /> Pan
+              </button>
+              <button
+                className={`btn-icon texture-mode-btn${mode === 'crop' ? ' active' : ''}`}
+                onClick={() => { setMode('crop'); setPreview(null); setPendingRect(null) }}
+                title="Draw a sample box"
+              >
+                <Crop size={13} /> Draw box
+              </button>
+            </div>
+            <div className="texture-toolbar-right">
+              <button className="btn-icon texture-zoom-btn" onClick={() => zoomBy(1.4)} disabled={!transform} title="Zoom in">
+                <ZoomIn size={13} />
+              </button>
+              <button className="btn-icon texture-zoom-btn" onClick={() => zoomBy(1 / 1.4)} disabled={!transform} title="Zoom out">
+                <ZoomOut size={13} />
+              </button>
+              <button className="btn-icon texture-zoom-btn" onClick={resetView} disabled={!transform} title="Reset view">
+                <RefreshCw size={13} />
+              </button>
+            </div>
+          </div>
+
+          {/* Image viewport */}
+          {photo && (
+            <div
+              ref={containerRef}
+              className={`texture-viewport texture-viewport--${mode}`}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+            >
+              {/* The image is rendered at its natural pixel size then CSS-transformed */}
+              <img
+                src={photo.url}
+                alt="Sample source"
+                draggable={false}
+                onLoad={handleImageLoad}
+                style={{
+                  position:        'absolute',
+                  top:             0,
+                  left:            0,
+                  width:           natSize ? `${natSize.nw}px` : 'auto',
+                  height:          natSize ? `${natSize.nh}px` : 'auto',
+                  maxWidth:        'none',
+                  maxHeight:       'none',
+                  display:         'block',
+                  pointerEvents:   'none',
+                  userSelect:      'none',
+                  transformOrigin: '0 0',
+                  transform:       transform
+                    ? `translate(${transform.tx}px,${transform.ty}px) scale(${transform.scale})`
+                    : 'none',
+                  opacity: transform ? 1 : 0,
+                }}
+              />
+
+              {/* Live drag rectangle */}
+              {liveRect && (
+                <div className="texture-crop-rect" style={liveRect} />
+              )}
+
+              {/* Committed box (shown while preview is loading or after redraw) */}
+              {committedRect && !liveRect && (
+                <div className="texture-crop-rect texture-crop-rect--committed" style={committedRect} />
+              )}
+
+              {/* Overlays */}
+              {generating && (
+                <div className="texture-crop-overlay">Generating sample…</div>
+              )}
+              {!natSize && !generating && (
+                <div className="texture-crop-overlay">Loading…</div>
+              )}
+              {mode === 'crop' && !pendingRect && natSize && !generating && (
+                <div className="texture-viewport-hint">
+                  Drag to draw a sample box
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Preview panel — shown after crop is generated */}
+          {preview && (
+            <div className="texture-preview-card">
+              <div className="texture-preview-row">
+                <div className="texture-preview-img-wrap">
+                  <img src={preview.dataUrl} alt="Crop" className="texture-preview-img" />
+                  <span className="texture-preview-label">Sample</span>
+                </div>
+
+                {preview.maskDataUrl && (
+                  <div className="texture-preview-img-wrap">
+                    <img
+                      src={preview.maskDataUrl}
+                      alt="Mask"
+                      className="texture-preview-img texture-preview-img--checker"
+                    />
+                    <span className="texture-preview-label">Mask</span>
+                  </div>
+                )}
+
+                <div className="texture-preview-colors">
+                  <div
+                    className="texture-preview-color texture-preview-color--avg"
+                    style={{ background: preview.averageColor }}
+                    title={`Average: ${preview.averageColor}`}
+                  />
+                  {preview.dominantColors?.slice(0, 3).map((c, i) => (
+                    <div
+                      key={i}
+                      className="texture-preview-color"
+                      style={{ background: c }}
+                      title={c}
+                    />
+                  ))}
+                  <span className="texture-preview-color-label">Colours</span>
+                </div>
+              </div>
+
+              {preview.notes?.length > 0 && (
+                <p className="texture-preview-notes">{preview.notes.join(' · ')}</p>
+              )}
+
+              <div className="texture-preview-actions">
+                <button className="btn-primary texture-apply-btn" onClick={handleApply}>
+                  <Check size={14} />
+                  Apply as {activeType}
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={() => { setPreview(null); setPendingRect(null) }}
+                >
+                  <Crop size={14} /> Redraw
+                </button>
               </div>
             </div>
           )}
 
-          {photo && (
-            <div
-              ref={containerRef}
-              className="texture-crop-wrap"
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-            >
-              <img
-                ref={imgRef}
-                src={photo.url}
-                alt="Crop source"
-                className="texture-crop-img"
-                draggable={false}
-              />
-              {cropRect && cropRect.w > 0.01 && cropRect.h > 0.01 && (
-                <div
-                  className="texture-crop-rect"
-                  style={{
-                    left: `${cropRect.x * 100}%`,
-                    top: `${cropRect.y * 100}%`,
-                    width: `${cropRect.w * 100}%`,
-                    height: `${cropRect.h * 100}%`,
-                  }}
-                />
-              )}
-              {cropping && <div className="texture-crop-overlay">Cropping…</div>}
+          {/* Success feedback */}
+          {appliedMsg && (
+            <div className="texture-applied-msg">
+              <Check size={13} /> {appliedMsg}
             </div>
           )}
 
-          {SAMPLE_TYPES.some((t) => textureSamples[t]) && (
+          {/* Applied samples summary */}
+          {TYPES.some((t) => textureSamples[t]) && (
             <div className="texture-thumbs">
-              {SAMPLE_TYPES.map((t) => {
+              {TYPES.map((t) => {
                 const s = textureSamples[t]
                 if (!s) return null
                 return (
                   <div key={t} className="texture-thumb-item">
-                    <img src={s.url} alt={`${t} sample`} />
+                    <img src={s.dataUrl} alt={`${t} sample`} />
                     <span className="texture-thumb-label">{t}</span>
                     <button
                       className="texture-thumb-clear"
-                      onClick={() => clearTextureSample(t)}
+                      onClick={() => handleClear(t)}
                       title={`Remove ${t} sample`}
                     >
                       <X size={10} />

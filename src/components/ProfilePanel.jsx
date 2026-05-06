@@ -97,18 +97,13 @@ function AuthForm() {
 // ── My Trees list ─────────────────────────────────────────────────────────────
 
 function MyTrees() {
-  const {
-    setStep, returnStep,
-    setPhotos, setEstimates, setLandmark, setUserHints,
-    setTreeStructureHint, setScaleRealWorldDist,
-    setSpeciesAIResult, setStructureDetectionResult, setPreviewMode,
-  } = useTreeSession()
+  const restoreSession = useTreeSession((s) => s.restoreSession)
 
-  const [trees, setTrees]       = useState([])
-  const [loading, setLoading]   = useState(true)
+  const [trees, setTrees]         = useState([])
+  const [loading, setLoading]     = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [loadingId, setLoadingId] = useState(null)
-  const [deleteId, setDeleteId]   = useState(null) // id awaiting confirm
+  const [deleteId, setDeleteId]   = useState(null)
 
   useEffect(() => {
     listMyTrees()
@@ -122,19 +117,16 @@ function MyTrees() {
     setLoadError(null)
     try {
       const { tree: t, photos: loadedPhotos } = await loadTree(id)
-
-      // Restore all session state from the saved record
-      if (loadedPhotos.length > 0) setPhotos(loadedPhotos)
-      if (t.estimates)             setEstimates(t.estimates)
-      if (t.landmarks)             Object.entries(t.landmarks).forEach(([k, v]) => setLandmark(k, v))
-      if (t.user_hints)            setUserHints(t.user_hints)
-      if (t.tree_structure_hints)  Object.entries(t.tree_structure_hints).forEach(([k, v]) => setTreeStructureHint(k, v))
-      if (t.scale_real_world_dist != null) setScaleRealWorldDist(t.scale_real_world_dist)
-      if (t.species_ai_result)     setSpeciesAIResult(t.species_ai_result)
-      if (t.structure_detection_result) setStructureDetectionResult(t.structure_detection_result)
-      if (t.preview_mode)          setPreviewMode(t.preview_mode)
-
-      setStep('estimate')
+      restoreSession({
+        id:                    t.id,
+        photos:                loadedPhotos,
+        estimates:             t.estimates,
+        landmarks:             t.landmarks,
+        userHints:             t.user_hints,
+        treeStructureHints:    t.treeStructureHints,
+        speciesAIResult:       t.speciesAIResult,
+        structureDetectionResult: t.structureDetectionResult ?? null,
+      })
     } catch (err) {
       setLoadError(err.message)
     } finally {
