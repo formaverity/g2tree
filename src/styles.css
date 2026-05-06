@@ -1,6 +1,22 @@
 /* ── Reset & Base ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Prevent iOS from zooming on input focus (requires font-size >= 16px) */
+input,
+textarea,
+select,
+button {
+  font-size: 16px;
+}
+
+@supports (-webkit-touch-callout: none) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 :root {
   --bg: #0f1410;
   --surface: #161d17;
@@ -154,7 +170,7 @@ button {
   cursor: pointer;
   border: none;
   font-family: inherit;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   border-radius: var(--radius-sm);
   transition: background 0.15s, opacity 0.15s, transform 0.1s;
@@ -409,8 +425,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: var(--radius-sm);
-  padding: 6px 10px;
-  font-size: 14px;
+  padding: 4px 10px;
+  font-size: 16px;
   width: 72px;
   outline: none;
   text-align: center;
@@ -832,8 +848,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: var(--radius-sm);
-  padding: 9px 10px;
-  font-size: 14px;
+  padding: 7px 10px;
+  font-size: 16px;
   font-family: inherit;
   outline: none;
   width: 100%;
@@ -1026,7 +1042,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 10px 14px;
-  font-size: 15px;
+  font-size: 16px;
   font-family: inherit;
   outline: none;
   width: 100%;

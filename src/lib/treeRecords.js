@@ -1,54 +1,72 @@
 /**
  * Supabase CRUD for saved tree records and field photos.
  *
- * Required Supabase setup — run this SQL in your project's SQL editor:
- *
- *   CREATE TABLE g2tree_trees (
- *     id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
- *     user_id                  uuid REFERENCES auth.users NOT NULL,
- *     created_at               timestamptz DEFAULT now(),
- *     updated_at               timestamptz DEFAULT now(),
- *     name                     text,
- *     species                  text,
- *     estimates                jsonb,
- *     landmarks                jsonb,
- *     user_hints               jsonb,
- *     tree_structure_hints     jsonb,
- *     scale_real_world_dist    numeric,
- *     species_ai_result        jsonb,
- *     structure_detection_result jsonb,
- *     procedural_params        jsonb,
- *     preview_mode             text
- *   );
- *   ALTER TABLE g2tree_trees ENABLE ROW LEVEL SECURITY;
- *   CREATE POLICY "own trees" ON g2tree_trees
- *     USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
- *
- *   CREATE TABLE g2tree_tree_photos (
- *     id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
- *     tree_id          uuid REFERENCES g2tree_trees ON DELETE CASCADE NOT NULL,
- *     user_id          uuid REFERENCES auth.users NOT NULL,
- *     created_at       timestamptz DEFAULT now(),
- *     storage_path     text,
- *     is_calibration   boolean DEFAULT false,
- *     exif             jsonb
- *   );
- *   ALTER TABLE g2tree_tree_photos ENABLE ROW LEVEL SECURITY;
- *   CREATE POLICY "own photos" ON g2tree_tree_photos
- *     USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
- *
- *   -- Storage bucket (create in Dashboard → Storage → New Bucket)
- *   -- Name: g2tree-photos   Access: Private
- *   -- Add RLS policy on objects: auth.uid()::text = (storage.foldername(name))[1]
+ * Actual g2tree_trees schema (columns accepted by insert/update):
+ *   user_id, display_name, common_name, scientific_name,
+ *   species_confidence, health_status, health_confidence,
+ *   lat, lng, observed_at,
+ *   dbh_in, height_ft, canopy_width_ft, age_class,
+ *   landmark_data, estimate_data, structure_hints, model_params, ai_results,
+ *   notes
  */
 
 import { supabase, supabaseConfigError } from './supabaseClient'
+import { buildTreeModelParams } from './treeModelParams'
+import { normalizeImageForPlantNet } from './imageNormalize'
 
 function requireSupabase() {
   if (!supabase) throw new Error(supabaseConfigError)
 }
-import { buildTreeModelParams } from './treeModelParams'
-import { normalizeImageForPlantNet } from './imageNormalize'
+
+/**
+ * Construct the insert payload for g2tree_trees using only allowed DB columns.
+ * Keeps app-side keys (estimates, landmarks, …) out of the wire payload.
+ */
+function buildTreeInsertPayload(state, userId) {
+  const {
+    photos,
+    landmarks,
+    estimates,
+    treeStructureHints,
+    speciesAIResult,
+    userHints,
+  } = state
+
+  const species = estimates?.species_guess ?? userHints?.known_species ?? null
+  const displayName = species
+    ? `${species} — ${new Date().toLocaleDateString()}`
+    : `Tree — ${new Date().toLocaleDateString()}`
+
+  const modelParams = estimates
+    ? buildTreeModelParams(estimates, treeStructureHints)
+    : null
+
+  const payload = {
+    user_id: userId,
+    display_name: displayName,
+    common_name: speciesAIResult?.common_name ?? null,
+    scientific_name: speciesAIResult?.scientific_name ?? null,
+    species_confidence: estimates?.species_confidence ?? null,
+    health_status: estimates?.health_status ?? null,
+    health_confidence: estimates?.health_confidence ?? null,
+    lat: photos[0]?.exif?.gps?.lat ?? null,
+    lng: photos[0]?.exif?.gps?.lng ?? null,
+    observed_at: photos[0]?.exif?.datetime ?? null,
+    dbh_in: estimates?.dbh_in ?? null,
+    height_ft: estimates?.height_ft ?? null,
+    canopy_width_ft: estimates?.canopy_width_ft ?? null,
+    age_class: estimates?.age_class ?? null,
+    landmark_data: landmarks,
+    estimate_data: estimates,
+    structure_hints: treeStructureHints,
+    model_params: modelParams,
+    ai_results: speciesAIResult,
+    notes: null,
+  }
+
+  console.log('tree insert payload', payload)
+  return payload
+}
 
 /**
  * Save the current session state as a new tree record, uploading photos to
@@ -61,59 +79,13 @@ export async function saveCurrentTree(state) {
   const { data: { user }, error: userError } = await supabase.auth.getUser()
   if (userError || !user) throw new Error('Not signed in')
 
-  const {
-    photos,
-    landmarks,
-    estimates,
-    scaleRealWorldDist,
-    userHints,
-    treeStructureHints,
-    speciesAIResult,
-    structureDetectionResult,
-    previewMode,
-    textureSamples,
-  } = state
+  const { photos, textureSamples } = state
 
-  const species = estimates?.species_guess ?? userHints?.known_species ?? null
-  const name = species
-    ? `${species} — ${new Date().toLocaleDateString()}`
-    : `Tree — ${new Date().toLocaleDateString()}`
-
-  const modelParams = estimates
-    ? buildTreeModelParams(estimates, treeStructureHints)
-    : null
+  const payload = buildTreeInsertPayload(state, user.id)
 
   const { data: tree, error: treeError } = await supabase
     .from('g2tree_trees')
-    .insert({
-      user_id: user.id,
-      name,
-      species,
-      // Scalar fields
-      common_name: speciesAIResult?.common_name ?? null,
-      scientific_name: speciesAIResult?.scientific_name ?? null,
-      species_confidence: estimates?.species_confidence ?? null,
-      health_status: estimates?.health_status ?? null,
-      health_confidence: estimates?.health_confidence ?? null,
-      dbh_in: estimates?.dbh_in ?? null,
-      height_ft: estimates?.height_ft ?? null,
-      canopy_width_ft: estimates?.canopy_width_ft ?? null,
-      age_class: estimates?.age_class ?? null,
-      lat: photos[0]?.exif?.gps?.lat ?? null,
-      lng: photos[0]?.exif?.gps?.lng ?? null,
-      observed_at: photos[0]?.exif?.datetime ?? null,
-      notes: null,
-      // JSONB columns (app key -> db column)
-      estimate_data: estimates,
-      landmark_data: landmarks,
-      user_hints: userHints,
-      structure_hints: treeStructureHints,
-      scale_real_world_dist: scaleRealWorldDist,
-      ai_results: speciesAIResult,
-      structure_detection_result: structureDetectionResult,
-      model_params: modelParams,
-      preview_mode: previewMode,
-    })
+    .insert(payload)
     .select()
     .single()
 
@@ -125,7 +97,6 @@ export async function saveCurrentTree(state) {
     if (!photo.file) continue
 
     try {
-      // Compress to JPEG for storage efficiency
       let uploadBlob = photo.file
       const norm = await normalizeImageForPlantNet(photo.file)
       if (!norm.error && norm.file) uploadBlob = norm.file
@@ -175,22 +146,27 @@ export async function saveCurrentTree(state) {
 
 /**
  * List saved trees for the current user, newest first.
- * Returns an array of lightweight rows (no full jsonb payloads).
+ * Returns lightweight rows with app-state key names (name, estimates).
  */
 export async function listMyTrees() {
   requireSupabase()
   const { data, error } = await supabase
     .from('g2tree_trees')
-    .select('id, name, species, created_at, estimate_data')
+    .select('id, display_name, common_name, scientific_name, created_at, estimate_data')
     .order('created_at', { ascending: false })
 
   if (error) throw error
-  return (data ?? []).map(({ estimate_data, ...row }) => ({ ...row, estimates: estimate_data }))
+  return (data ?? []).map(({ display_name, estimate_data, ...row }) => ({
+    ...row,
+    name: display_name,
+    estimates: estimate_data,
+  }))
 }
 
 /**
  * Load a full tree record plus signed photo URLs.
  * Returns { tree, photos: [{ id, url, file: null, exif }] }
+ * tree has app-state keys overlaid (name, landmarks, estimates, …).
  */
 export async function loadTree(id) {
   requireSupabase()
@@ -225,9 +201,10 @@ export async function loadTree(id) {
     }
   }
 
-  // Remap db column names back to app state keys
+  // Remap DB column names to app state keys
   const mappedTree = {
     ...tree,
+    name: tree.display_name,
     landmarks: tree.landmark_data,
     estimates: tree.estimate_data,
     treeStructureHints: tree.structure_hints,
