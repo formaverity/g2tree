@@ -492,6 +492,9 @@ export default function EstimatePanel() {
           <button className="btn-back" onClick={() => setStep('calibrate')}>
             <ArrowLeft size={16} /> Back
           </button>
+          <button className="btn-secondary" onClick={() => setStep('scaffold')}>
+            Scaffold <ArrowRight size={16} />
+          </button>
           <button className="btn-next" onClick={() => setStep('preview')}>
             Preview <ArrowRight size={16} />
           </button>

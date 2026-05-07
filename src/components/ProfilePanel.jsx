@@ -8,11 +8,11 @@ import { listMyTrees, loadTree, deleteTree } from '../lib/treeRecords'
 // ── Auth form ─────────────────────────────────────────────────────────────────
 
 function AuthForm() {
-  const [mode, setMode] = useState('signin') // signin | signup
-  const [email, setEmail] = useState('')
+  const [mode, setMode]       = useState('signin')
+  const [email, setEmail]     = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const [error, setError]     = useState(null)
   const [message, setMessage] = useState(null)
 
   if (!supabaseConfigured) {
@@ -21,14 +21,11 @@ function AuthForm() {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    setLoading(true)
-    setError(null)
-    setMessage(null)
+    setLoading(true); setError(null); setMessage(null)
     try {
       if (mode === 'signup') {
         const { error } = await supabase.auth.signUp({
-          email,
-          password,
+          email, password,
           options: { emailRedirectTo: window.location.origin },
         })
         if (error) throw error
@@ -47,57 +44,47 @@ function AuthForm() {
   return (
     <div className="auth-section">
       <p className="auth-tagline">Sign in to save and revisit your field trees.</p>
-
       <form className="auth-form" onSubmit={handleSubmit}>
         <label className="auth-field">
           <span className="auth-label">Email</span>
-          <input
-            type="email"
-            className="auth-input"
-            value={email}
+          <input type="email" className="auth-input" value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            autoComplete="email"
-            required
-          />
+            placeholder="you@example.com" autoComplete="email" required />
         </label>
-
         <label className="auth-field">
           <span className="auth-label">Password</span>
-          <input
-            type="password"
-            className="auth-input"
-            value={password}
+          <input type="password" className="auth-input" value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
             autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-            required
-            minLength={6}
-          />
+            required minLength={6} />
         </label>
-
         {error   && <div className="auth-error">{error}</div>}
         {message && <div className="auth-message">{message}</div>}
-
         <button type="submit" className="btn-primary auth-submit" disabled={loading}>
           {loading ? '…' : mode === 'signup' ? 'Create account' : 'Sign in'}
         </button>
       </form>
-
-      <button
-        className="auth-mode-toggle"
-        onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); setMessage(null) }}
-      >
+      <button className="auth-mode-toggle"
+        onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); setMessage(null) }}>
         {mode === 'signin' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
       </button>
     </div>
   )
 }
 
+// ── Clone status pill ─────────────────────────────────────────────────────────
+
+function CloneStatusPill({ status }) {
+  const label = status === 'finished' ? 'finished' : status === 'previewed' ? 'previewed' : 'draft'
+  return <span className={`clone-status-pill clone-status-${label}`}>{label}</span>
+}
+
 // ── My Trees list ─────────────────────────────────────────────────────────────
 
 function MyTrees() {
   const restoreSession = useTreeSession((s) => s.restoreSession)
+  const setView        = useTreeSession((s) => s.setView)
 
   const [trees, setTrees]         = useState([])
   const [loading, setLoading]     = useState(true)
@@ -112,21 +99,29 @@ function MyTrees() {
       .finally(() => setLoading(false))
   }, [])
 
-  async function handleLoad(id) {
+  async function handleLoad(id, cloneStatus) {
     setLoadingId(id)
     setLoadError(null)
     try {
       const { tree: t, photos: loadedPhotos } = await loadTree(id)
       restoreSession({
-        id:                    t.id,
-        photos:                loadedPhotos,
-        estimates:             t.estimates,
-        landmarks:             t.landmarks,
-        userHints:             t.user_hints,
-        treeStructureHints:    t.treeStructureHints,
-        speciesAIResult:       t.speciesAIResult,
+        id,
+        photos:                  loadedPhotos,
+        estimates:               t.estimates,
+        landmarks:               t.landmarks,
+        userHints:               t.user_hints,
+        treeStructureHints:      t.treeStructureHints,
+        speciesAIResult:         t.speciesAIResult,
         structureDetectionResult: t.structureDetectionResult ?? null,
+        textureSamples:          t.textureSamples,
+        cloneStatus:             t.cloneStatus,
+        cloneData:               t.cloneData,
+        finishedAt:              t.finishedAt,
       })
+      // Finished clones open their dedicated view; drafts open the workflow
+      if (cloneStatus === 'finished') {
+        setView('finishedClone')
+      }
     } catch (err) {
       setLoadError(err.message)
     } finally {
@@ -135,12 +130,7 @@ function MyTrees() {
   }
 
   async function handleDelete(id) {
-    if (deleteId !== id) {
-      // First click — ask for confirmation
-      setDeleteId(id)
-      return
-    }
-    // Second click — confirmed
+    if (deleteId !== id) { setDeleteId(id); return }
     setDeleteId(null)
     try {
       await deleteTree(id)
@@ -183,17 +173,24 @@ function MyTrees() {
             <div className="tree-card-meta">
               <span className="tree-card-date">{formatDate(tree.created_at)}</span>
               {confidenceLabel(tree.estimates)}
+              <CloneStatusPill status={tree.cloneStatus} />
             </div>
+            {(tree.dbh_in || tree.height_ft) && (
+              <div className="tree-card-dims">
+                {tree.dbh_in   && <span>DBH {tree.dbh_in}&Prime;</span>}
+                {tree.height_ft && <span>H {tree.height_ft}′</span>}
+              </div>
+            )}
           </div>
           <div className="tree-card-actions">
             <button
               className="btn-icon tree-card-load"
-              onClick={() => handleLoad(tree.id)}
+              onClick={() => handleLoad(tree.id, tree.cloneStatus)}
               disabled={loadingId === tree.id}
-              title="Restore this tree"
+              title={tree.cloneStatus === 'finished' ? 'Open finished clone' : 'Restore this tree'}
             >
               <Download size={14} />
-              {loadingId === tree.id ? 'Loading…' : 'Load'}
+              {loadingId === tree.id ? 'Loading…' : tree.cloneStatus === 'finished' ? 'Open' : 'Load'}
             </button>
             <button
               className={`btn-remove tree-card-delete ${deleteId === tree.id ? 'confirming' : ''}`}
@@ -257,7 +254,6 @@ export default function ProfilePanel() {
               <li>hasSupabaseUrl: {String(Boolean(import.meta.env.VITE_SUPABASE_URL))}</li>
               <li>hasAnonKey: {String(Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY))}</li>
               <li>origin: {window.location.origin}</li>
-              <li>url: {window.location.href}</li>
             </ul>
           </details>
         )}

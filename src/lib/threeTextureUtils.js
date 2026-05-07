@@ -2,8 +2,12 @@ import * as THREE from 'three'
 
 const MAX_PX = { bark: 1024, leaf: 512, canopy: 768, default: 512 }
 
-function isValidDataUrl(url) {
+function isDataUrl(url) {
   return typeof url === 'string' && url.startsWith('data:image')
+}
+
+function isHttpUrl(url) {
+  return typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))
 }
 
 /**
@@ -11,7 +15,7 @@ function isValidDataUrl(url) {
  * Returns the original dataUrl if already small enough, or null on failure.
  */
 export function downscaleDataUrl(dataUrl, maxPx) {
-  if (!isValidDataUrl(dataUrl)) return Promise.resolve(null)
+  if (!isDataUrl(dataUrl)) return Promise.resolve(null)
   return new Promise((resolve) => {
     const img = new Image()
     img.onload = () => {
@@ -31,8 +35,8 @@ export function downscaleDataUrl(dataUrl, maxPx) {
 }
 
 /**
- * Safely load a THREE.Texture from a dataUrl.
- * Returns null (not a rejection) if the dataUrl is invalid or loading fails.
+ * Safely load a THREE.Texture from a data URL or an HTTPS URL.
+ * Returns null (not a rejection) if loading fails.
  *
  * options:
  *   textureType  — 'bark' | 'leaf' | 'canopy' | 'default'  (controls max downscale size)
@@ -40,17 +44,23 @@ export function downscaleDataUrl(dataUrl, maxPx) {
  *   repeat       — [u, v] repeat values
  *   anisotropy   — anisotropy level
  */
-export async function loadTextureSafe(dataUrl, options = {}) {
-  if (!isValidDataUrl(dataUrl)) return null
+export async function loadTextureSafe(url, options = {}) {
+  if (!isDataUrl(url) && !isHttpUrl(url)) return null
 
-  const maxPx = MAX_PX[options.textureType] ?? MAX_PX.default
-  const url = await downscaleDataUrl(dataUrl, maxPx)
-  if (!url) return null
+  let loadUrl = url
+
+  if (isDataUrl(url)) {
+    const maxPx = MAX_PX[options.textureType] ?? MAX_PX.default
+    loadUrl = await downscaleDataUrl(url, maxPx)
+    if (!loadUrl) return null
+  }
 
   return new Promise((resolve) => {
     try {
-      new THREE.TextureLoader().load(
-        url,
+      const loader = new THREE.TextureLoader()
+      loader.crossOrigin = 'anonymous'
+      loader.load(
+        loadUrl,
         (texture) => {
           texture.needsUpdate = true
           texture.wrapS = options.wrapS ?? THREE.RepeatWrapping

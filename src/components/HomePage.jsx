@@ -11,6 +11,11 @@ function formatDate(iso) {
   })
 }
 
+function CloneStatusPill({ status }) {
+  const label = status === 'finished' ? 'finished' : status === 'previewed' ? 'previewed' : 'draft'
+  return <span className={`clone-status-pill clone-status-${label}`}>{label}</span>
+}
+
 function SavedTreeList({ onLoad }) {
   const [trees, setTrees]         = useState([])
   const [loading, setLoading]     = useState(true)
@@ -44,9 +49,7 @@ function SavedTreeList({ onLoad }) {
       <div className="home-trees-empty">
         <TreePine size={28} strokeWidth={1.5} />
         <p>No saved trees yet.</p>
-        <p className="home-trees-empty-hint">
-          After saving a tree you will find it here.
-        </p>
+        <p className="home-trees-empty-hint">After saving a tree you will find it here.</p>
       </div>
     )
   }
@@ -59,16 +62,29 @@ function SavedTreeList({ onLoad }) {
             <div className="tree-card-name">{tree.name || 'Unknown tree'}</div>
             <div className="tree-card-meta">
               <span className="tree-card-date">{formatDate(tree.created_at)}</span>
+              <CloneStatusPill status={tree.cloneStatus} />
             </div>
+            {(tree.dbh_in || tree.height_ft) && (
+              <div className="tree-card-dims">
+                {tree.dbh_in    && <span>DBH {tree.dbh_in}&Prime;</span>}
+                {tree.height_ft && <span>H {tree.height_ft}′</span>}
+              </div>
+            )}
+            {(tree.common_name || tree.scientific_name) && (
+              <div className="tree-card-species">
+                {tree.common_name && <span>{tree.common_name}</span>}
+                {tree.scientific_name && <span className="tree-card-sci">{tree.scientific_name}</span>}
+              </div>
+            )}
           </div>
           <div className="tree-card-actions">
             <button
               className="btn-icon tree-card-load"
-              onClick={() => onLoad(tree.id)}
+              onClick={() => onLoad(tree.id, tree.cloneStatus)}
               disabled={loadingId === tree.id}
             >
               <Download size={14} />
-              {loadingId === tree.id ? 'Loading…' : 'Load'}
+              {loadingId === tree.id ? 'Loading…' : tree.cloneStatus === 'finished' ? 'Open' : 'Load'}
             </button>
             <button
               className={`btn-remove tree-card-delete ${deleteId === tree.id ? 'confirming' : ''}`}
@@ -89,27 +105,35 @@ export default function HomePage() {
   const session        = useTreeSession((s) => s.session)
   const startNewTree   = useTreeSession((s) => s.startNewTree)
   const restoreSession = useTreeSession((s) => s.restoreSession)
+  const setView        = useTreeSession((s) => s.setView)
   const setStep        = useTreeSession((s) => s.setStep)
   const setReturn      = useTreeSession((s) => s.setReturnStep)
 
   const [loadError, setLoadError] = useState(null)
   const [loadingId, setLoadingId] = useState(null)
 
-  async function handleLoad(id) {
+  async function handleLoad(id, cloneStatus) {
     setLoadingId(id)
     setLoadError(null)
     try {
       const { tree: t, photos: loadedPhotos } = await loadTree(id)
       restoreSession({
-        id:                       t.id,
-        photos:                   loadedPhotos,
-        estimates:                t.estimates,
-        landmarks:                t.landmarks,
-        userHints:                t.user_hints,
-        treeStructureHints:       t.treeStructureHints,
-        speciesAIResult:          t.speciesAIResult,
+        id,
+        photos:                  loadedPhotos,
+        estimates:               t.estimates,
+        landmarks:               t.landmarks,
+        userHints:               t.user_hints,
+        treeStructureHints:      t.treeStructureHints,
+        speciesAIResult:         t.speciesAIResult,
         structureDetectionResult: t.structureDetectionResult ?? null,
+        textureSamples:          t.textureSamples,
+        cloneStatus:             t.cloneStatus,
+        cloneData:               t.cloneData,
+        finishedAt:              t.finishedAt,
       })
+      if (cloneStatus === 'finished') {
+        setView('finishedClone')
+      }
     } catch (err) {
       setLoadError(err.message)
     } finally {
@@ -120,7 +144,6 @@ export default function HomePage() {
   function handleSignIn() {
     setReturn('capture')
     setStep('profile')
-    // Switch to workflow so the profile panel is visible
     useTreeSession.getState().setView('workflow')
   }
 

@@ -5,13 +5,20 @@ import { saveCurrentTree } from '../lib/treeRecords'
 import ConfirmLeaveModal from './ConfirmLeaveModal'
 
 const STEPS = [
-  { id: 'capture',   label: 'Capture'   },
-  { id: 'review',    label: 'Review'    },
-  { id: 'calibrate', label: 'Calibrate' },
-  { id: 'estimate',  label: 'Estimate'  },
-  { id: 'preview',   label: 'Preview'   },
-  { id: 'export',    label: 'Export'    },
+  { id: 'capture',   label: 'Capture',   aliases: []                   },
+  { id: 'review',    label: 'Review',    aliases: []                   },
+  { id: 'identify',  label: 'Identify',  aliases: ['estimate']         },
+  { id: 'calibrate', label: 'Calibrate', aliases: []                   },
+  { id: 'scaffold',  label: 'Scaffold',  aliases: []                   },
+  { id: 'materials', label: 'Materials', aliases: []                   },
+  { id: 'clone',     label: 'Clone',     aliases: ['preview']          },
 ]
+
+function resolveStepIndex(step) {
+  const direct = STEPS.findIndex((s) => s.id === step)
+  if (direct !== -1) return direct
+  return STEPS.findIndex((s) => s.aliases?.includes(step))
+}
 
 export default function StepHeader({ step }) {
   const session          = useTreeSession((s) => s.session)
@@ -28,7 +35,7 @@ export default function StepHeader({ step }) {
   const [saving, setSaving]       = useState(false)
   const [saveError, setSaveError] = useState(null)
 
-  const currentIdx = STEPS.findIndex((s) => s.id === step)
+  const currentIdx = resolveStepIndex(step)
 
   function handleProfileClick() {
     if (step === 'profile') return

@@ -376,7 +376,7 @@ function SegMesh({ seg, color, map }) {
 
 // ── ProceduralTree ────────────────────────────────────────────────────────────
 
-function ProceduralTree({ params, mode, barkMap, leafMap, leafMasked }) {
+export function ProceduralTree({ params, mode, barkMap, leafMap, leafMasked }) {
   const geo = useMemo(() => buildGeometry(params, mode), [params, mode])
 
   const speckleAttr = useMemo(() => {
@@ -421,9 +421,76 @@ function ProceduralTree({ params, mode, barkMap, leafMap, leafMasked }) {
   )
 }
 
+// ── ScaffoldTree — photo_scaffold render mode ─────────────────────────────────
+
+export function ScaffoldTree({ scaffoldGeometry, params, barkMap, leafMap, leafMasked }) {
+  const geo = useMemo(() => {
+    if (!scaffoldGeometry || !params) return null
+    const { trunkCurve, branchAttractors, leafCloudPoints } = scaffoldGeometry
+
+    const trunks   = []
+    const branches = []
+
+    // Curved trunk segments
+    if (trunkCurve?.length > 1) {
+      for (let i = 0; i < trunkCurve.length - 1; i++) {
+        const a  = trunkCurve[i]
+        const b  = trunkCurve[i + 1]
+        const tA = i / (trunkCurve.length - 1)
+        const tB = (i + 1) / (trunkCurve.length - 1)
+        const r0 = a.r ?? params.trunkRadiusBase
+        const r1 = b.r ?? params.trunkRadiusTop
+        const seg = cylSeg([a.x, a.y, a.z], [b.x, b.y, b.z], r0, r1)
+        if (seg) trunks.push(seg)
+      }
+    } else {
+      // Fallback: straight trunk
+      const seg = cylSeg([0, 0, 0], [0, params.trunkHeight, 0], params.trunkRadiusBase, params.trunkRadiusTop)
+      if (seg) trunks.push(seg)
+    }
+
+    // Branch attractors
+    for (const att of (branchAttractors ?? [])) {
+      const seg = cylSeg(att.start, att.end, att.r0 ?? 0.025, att.r1 ?? 0.012)
+      if (seg) branches.push(seg)
+    }
+
+    return { trunks, branches, leafCloudPoints: leafCloudPoints ?? [] }
+  }, [scaffoldGeometry, params])
+
+  if (!geo) return null
+
+  return (
+    <group position={[0, -params.trunkHeight / 2, 0]}>
+      {geo.trunks.map((s, i)   => <SegMesh key={`st${i}`} seg={s} color={params.trunkColor} map={barkMap} />)}
+      {geo.branches.map((s, i) => <SegMesh key={`sb${i}`} seg={s} color={params.trunkColor} map={barkMap} />)}
+
+      {geo.leafCloudPoints.map((lc, i) => (
+        <mesh key={`sl${i}`} position={lc.pos}>
+          <sphereGeometry args={[lc.radius, 7, 6]} />
+          <meshStandardMaterial
+            color={leafMap ? '#ffffff' : params.canopyColor}
+            roughness={0.82}
+            transparent
+            opacity={lc.opacity * Math.min(params.canopyDensity, 1)}
+            map={leafMap || null}
+            alphaTest={leafMasked ? 0.35 : 0}
+            depthWrite={!leafMasked}
+          />
+        </mesh>
+      ))}
+
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.002, 0]}>
+        <circleGeometry args={[params.canopyRadius * 0.52, 28]} />
+        <meshStandardMaterial color="#1b2e1d" transparent opacity={0.32} />
+      </mesh>
+    </group>
+  )
+}
+
 // ── TreePreview panel ─────────────────────────────────────────────────────────
 
-const MODES = ['simple', 'structured', 'detailed']
+const MODES = ['simple', 'structured', 'detailed', 'photo_scaffold']
 
 const TYPE_LABEL = {
   deciduous_broadleaf: 'deciduous',
@@ -431,15 +498,15 @@ const TYPE_LABEL = {
   palm_like:           'palm',
 }
 
-function isDataUrl(url) {
-  return typeof url === 'string' && url.startsWith('data:image')
+function isUsableUrl(url) {
+  return typeof url === 'string' && (url.startsWith('data:image') || url.startsWith('http'))
 }
 
 export default function TreePreview() {
   const {
     estimates, treeStructureHints,
     speciesAIResult, userHints,
-    textureSamples,
+    textureSamples, scaffoldGeometry,
     previewMode, setPreviewMode, setStep,
   } = useTreeSession()
 
@@ -449,20 +516,23 @@ export default function TreePreview() {
   const [skipTextures, setSkipTextures] = useState(false)
   const [texErrors, setTexErrors] = useState(0)
 
-  // Validate sample before reading URLs
-  const barkSample  = textureSamples?.bark
-  const leafSample  = textureSamples?.leaf ?? textureSamples?.canopy
+  // Validate sample before reading URLs — accept both data: and https: (persisted)
+  const barkSample = textureSamples?.bark
+  const leafSample = textureSamples?.leaf ?? textureSamples?.canopy
 
-  const barkUrl = isDataUrl(barkSample?.dataUrl) ? barkSample.dataUrl : null
+  const barkUrl = (() => {
+    if (!barkSample) return null
+    const u = barkSample.dataUrl ?? barkSample.url
+    return isUsableUrl(u) ? u : null
+  })()
 
   const leafUrl = (() => {
     if (!leafSample) return null
-    // Prefer masked PNG (has proper alpha) over original JPEG
-    const url = leafSample.dataUrl
-    return isDataUrl(url) ? url : null
+    const u = leafSample.dataUrl ?? leafSample.url
+    return isUsableUrl(u) ? u : null
   })()
 
-  // Detect if the leaf dataUrl is a masked PNG (transparent)
+  // Detect if the leaf texture is a masked PNG (transparent alpha)
   const isMaskedPng = typeof leafUrl === 'string' && leafUrl.startsWith('data:image/png')
 
   useEffect(() => {
@@ -548,13 +618,23 @@ export default function TreePreview() {
               <directionalLight position={[3, 6, 4]} intensity={1.2} />
               <directionalLight position={[-3, 2, -2]} intensity={0.3} />
               <Suspense fallback={null}>
-                <ProceduralTree
-                  params={params}
-                  mode={previewMode}
-                  barkMap={barkMap}
-                  leafMap={leafMap}
-                  leafMasked={leafMasked}
-                />
+                {previewMode === 'photo_scaffold' && scaffoldGeometry ? (
+                  <ScaffoldTree
+                    scaffoldGeometry={scaffoldGeometry}
+                    params={params}
+                    barkMap={barkMap}
+                    leafMap={leafMap}
+                    leafMasked={leafMasked}
+                  />
+                ) : (
+                  <ProceduralTree
+                    params={params}
+                    mode={previewMode === 'photo_scaffold' ? 'structured' : previewMode}
+                    barkMap={barkMap}
+                    leafMap={leafMap}
+                    leafMasked={leafMasked}
+                  />
+                )}
               </Suspense>
               <OrbitControls enablePan={false} minDistance={0.8} maxDistance={6} />
             </Canvas>

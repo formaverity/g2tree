@@ -238,14 +238,14 @@ export default function LandmarkCanvas() {
         </div>
 
         <div className="panel-footer">
-          <button className="btn-back" onClick={() => setStep('review')}>
-            <ArrowLeft size={16} /> Back
+          <button className="btn-back" onClick={() => setStep('identify')}>
+            <ArrowLeft size={16} /> Identify
           </button>
           <button className="btn-icon" onClick={resetLandmarks}>
             <RotateCcw size={14} /> Reset Points
           </button>
-          <button className="btn-next" onClick={() => setStep('estimate')}>
-            Estimate <ArrowRight size={16} />
+          <button className="btn-next" onClick={() => setStep('scaffold')}>
+            Scaffold <ArrowRight size={16} />
           </button>
         </div>
       </div>

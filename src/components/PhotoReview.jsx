@@ -71,9 +71,9 @@ export default function PhotoReview() {
           <button
             className="btn-next"
             disabled={photos.length === 0}
-            onClick={() => setStep('calibrate')}
+            onClick={() => setStep('identify')}
           >
-            Calibrate <ArrowRight size={16} />
+            Identify <ArrowRight size={16} />
           </button>
         </div>
       </div>

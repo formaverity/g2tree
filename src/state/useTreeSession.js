@@ -14,20 +14,27 @@ const DEFAULT_LANDMARKS = {
 }
 
 const DEFAULT_USER_HINTS = {
-  known_dbh_in: '',
-  known_height_ft: '',
-  known_species: '',
-  site_type: '',
+  known_dbh_in:        '',
+  known_height_ft:     '',
+  known_species:       '',
+  site_type:           '',
   photo_distance_hint: 'unknown',
 }
 
 const DEFAULT_STRUCTURE_HINTS = {
-  trunkForm: 'unknown',
-  trunkCount: 1,
-  branchDensity: 'medium',
-  canopyDistribution: 'medium',
-  leafDistribution: 'clustered',
+  trunkForm:                  'unknown',
+  trunkCount:                 1,
+  branchDensity:              'medium',
+  canopyDistribution:         'medium',
+  leafDistribution:           'clustered',
   detectedStructureConfidence: 0,
+}
+
+const DEFAULT_SCAFFOLD_EDITOR = {
+  branchGestures:    [],
+  canopyProfiles:    null,
+  canopyDensityHint: 'medium',
+  trunkCharacter:    'straight',
 }
 
 const useTreeSession = create((set, get) => ({
@@ -35,7 +42,7 @@ const useTreeSession = create((set, get) => ({
   session: null,
   setSession: (session) => set({ session }),
 
-  // View routing: 'home' shows the home page, 'workflow' shows the step-based flow
+  // View routing: 'home' | 'workflow' | 'finishedClone'
   view: 'home',
   setView: (view) => set({ view }),
 
@@ -46,20 +53,34 @@ const useTreeSession = create((set, get) => ({
   setReturnStep: (step) => set({ returnStep: step }),
 
   // Save lifecycle
-  currentTreeId: null,
-  isSaved: false,
+  currentTreeId:    null,
+  isSaved:          false,
   hasUnsavedChanges: false,
-  lastSavedAt: null,
+  lastSavedAt:      null,
 
   markSaved: (id) => set({
-    currentTreeId: id,
-    isSaved: true,
+    currentTreeId:     id,
+    isSaved:           true,
     hasUnsavedChanges: false,
-    lastSavedAt: new Date().toISOString(),
+    lastSavedAt:       new Date().toISOString(),
+  }),
+
+  // Clone lifecycle
+  cloneStatus: 'draft',   // 'draft' | 'previewed' | 'finished'
+  cloneData:   {},
+  finishedAt:  null,
+
+  setCloneStatus: (status) => set({ cloneStatus: status, hasUnsavedChanges: true, isSaved: false }),
+
+  finishClone: (cloneData) => set({
+    cloneData,
+    cloneStatus:       'finished',
+    finishedAt:        new Date().toISOString(),
+    hasUnsavedChanges: true,
+    isSaved:           false,
   }),
 
   // Clear all tree data and return to blank capture state.
-  // Does NOT delete any saved DB record — the record persists in Supabase.
   resetSession: () => {
     const { photos, textureSamples } = get()
     photos.forEach((p) => { if (p.url?.startsWith('blob:')) URL.revokeObjectURL(p.url) })
@@ -67,22 +88,32 @@ const useTreeSession = create((set, get) => ({
       if (s?.url?.startsWith('blob:')) URL.revokeObjectURL(s.url)
     })
     set({
-      photos: [],
-      landmarks: { ...DEFAULT_LANDMARKS },
-      showScaleRef: false,
-      scaleRealWorldDist: 1.0,
-      userHints: { ...DEFAULT_USER_HINTS },
-      estimates: null,
-      speciesAIResult: null,
-      treeStructureHints: { ...DEFAULT_STRUCTURE_HINTS },
+      photos:              [],
+      landmarks:           { ...DEFAULT_LANDMARKS },
+      showScaleRef:        false,
+      scaleRealWorldDist:  1.0,
+      userHints:           { ...DEFAULT_USER_HINTS },
+      estimates:           null,
+      speciesAIResult:     null,
+      treeStructureHints:  { ...DEFAULT_STRUCTURE_HINTS },
       structureDetectionResult: null,
-      previewMode: isMobile ? 'simple' : 'structured',
-      textureSamples: { bark: null, leaf: null, canopy: null },
-      currentTreeId: null,
-      isSaved: false,
-      hasUnsavedChanges: false,
-      lastSavedAt: null,
-      step: 'capture',
+      previewMode:         isMobile ? 'simple' : 'structured',
+      textureSamples:      { bark: null, leaf: null, canopy: null },
+      currentTreeId:       null,
+      isSaved:             false,
+      hasUnsavedChanges:   false,
+      lastSavedAt:         null,
+      cloneStatus:         'draft',
+      cloneData:           {},
+      finishedAt:          null,
+      photoScaffold:       null,
+      scaffoldGeometry:    null,
+      trunkAxisOverride:   null,
+      branchGestures:      [],
+      canopyProfiles:      null,
+      canopyDensityHint:   'medium',
+      trunkCharacter:      'straight',
+      step:                'capture',
     })
   },
 
@@ -93,33 +124,53 @@ const useTreeSession = create((set, get) => ({
   },
 
   // Restore all session state from a loaded tree record in one atomic update.
-  // Sets isSaved=true / hasUnsavedChanges=false so no dirty modal triggers.
   restoreSession: ({
-    photos = [],
-    estimates = null,
+    photos               = [],
+    estimates            = null,
     landmarks,
     userHints,
     treeStructureHints,
-    speciesAIResult = null,
+    speciesAIResult      = null,
     structureDetectionResult = null,
     previewMode,
+    textureSamples,
+    cloneStatus          = 'draft',
+    cloneData            = {},
+    finishedAt           = null,
+    photoScaffold        = null,
+    scaffoldGeometry     = null,
+    branchGestures       = [],
+    canopyProfiles       = null,
+    canopyDensityHint    = 'medium',
+    trunkCharacter       = 'straight',
     id,
   }) => {
     set({
       photos,
       estimates,
-      landmarks: landmarks ?? { ...DEFAULT_LANDMARKS },
-      userHints: userHints ?? { ...DEFAULT_USER_HINTS },
-      treeStructureHints: treeStructureHints ?? { ...DEFAULT_STRUCTURE_HINTS },
+      landmarks:            landmarks         ?? { ...DEFAULT_LANDMARKS },
+      userHints:            userHints         ?? { ...DEFAULT_USER_HINTS },
+      treeStructureHints:   treeStructureHints ?? { ...DEFAULT_STRUCTURE_HINTS },
       speciesAIResult,
       structureDetectionResult,
-      previewMode: previewMode ?? (isMobile ? 'simple' : 'structured'),
-      currentTreeId: id,
-      isSaved: true,
-      hasUnsavedChanges: false,
-      lastSavedAt: new Date().toISOString(),
-      step: 'estimate',
-      view: 'workflow',
+      previewMode:          previewMode ?? 'photo_scaffold',
+      textureSamples:       textureSamples ?? { bark: null, leaf: null, canopy: null },
+      cloneStatus,
+      cloneData,
+      finishedAt,
+      photoScaffold,
+      scaffoldGeometry,
+      trunkAxisOverride:    null,
+      branchGestures,
+      canopyProfiles,
+      canopyDensityHint,
+      trunkCharacter,
+      currentTreeId:        id,
+      isSaved:              true,
+      hasUnsavedChanges:    false,
+      lastSavedAt:          new Date().toISOString(),
+      step:                 'identify',
+      view:                 'workflow',
     })
   },
 
@@ -127,8 +178,8 @@ const useTreeSession = create((set, get) => ({
   photos: [],
   addPhotos: (files) => {
     const newPhotos = files.map((file) => ({
-      id: crypto.randomUUID(),
-      url: URL.createObjectURL(file),
+      id:   crypto.randomUUID(),
+      url:  URL.createObjectURL(file),
       file,
       exif: null,
     }))
@@ -188,10 +239,31 @@ const useTreeSession = create((set, get) => ({
   setTextureSample: (type, sample) =>
     set((s) => ({ textureSamples: { ...s.textureSamples, [type]: sample }, hasUnsavedChanges: true, isSaved: false })),
   clearTextureSample: (type) => {
-    const url = get().textureSamples[type]?.url
-    if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
+    const cur = get().textureSamples[type]
+    if (cur?.url?.startsWith('blob:')) URL.revokeObjectURL(cur.url)
     set((s) => ({ textureSamples: { ...s.textureSamples, [type]: null } }))
   },
+
+  // Photo scaffold analysis and geometry
+  photoScaffold:     null,
+  scaffoldGeometry:  null,
+  trunkAxisOverride: null,   // user-adjusted trunk axis points (5 handles)
+
+  setPhotoScaffold:    (scaffold)  => set({ photoScaffold: scaffold, hasUnsavedChanges: true, isSaved: false }),
+  setScaffoldGeometry: (geometry) => set({ scaffoldGeometry: geometry }),
+  setTrunkAxisOverride: (pts)     => set({ trunkAxisOverride: pts }),
+  clearScaffold: () => set({ photoScaffold: null, scaffoldGeometry: null, trunkAxisOverride: null }),
+
+  // Scaffold editor gesture state
+  branchGestures:    [],
+  canopyProfiles:    null,
+  canopyDensityHint: 'medium',
+  trunkCharacter:    'straight',
+
+  setBranchGestures:    (gs)  => set({ branchGestures: gs, hasUnsavedChanges: true, isSaved: false }),
+  setCanopyProfiles:    (p)   => set({ canopyProfiles: p, hasUnsavedChanges: true, isSaved: false }),
+  setCanopyDensityHint: (h)   => set({ canopyDensityHint: h }),
+  setTrunkCharacter:    (c)   => set({ trunkCharacter: c }),
 }))
 
 export default useTreeSession

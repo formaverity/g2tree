@@ -7,19 +7,28 @@ import StepHeader from './components/StepHeader'
 import CapturePanel from './components/CapturePanel'
 import PhotoReview from './components/PhotoReview'
 import LandmarkCanvas from './components/LandmarkCanvas'
-import EstimatePanel from './components/EstimatePanel'
-import TreePreview from './components/TreePreview'
 import PreviewErrorBoundary from './components/PreviewErrorBoundary'
+import IdentifyPanel from './components/IdentifyPanel'
+import PhotoScaffoldEditor from './components/PhotoScaffoldEditor'
+import MaterialsPanel from './components/MaterialsPanel'
+import ClonePreview from './components/ClonePreview'
 import ExportPanel from './components/ExportPanel'
 import ProfilePanel from './components/ProfilePanel'
+import FinishedCloneView from './components/FinishedCloneView'
 import './styles.css'
 
+// Map step IDs → panel components.
+// Old IDs (estimate, preview, scaffold) redirect to new equivalents.
 const STEP_MAP = {
   capture:   CapturePanel,
   review:    PhotoReview,
+  identify:  IdentifyPanel,
+  estimate:  IdentifyPanel,      // legacy alias
   calibrate: LandmarkCanvas,
-  estimate:  EstimatePanel,
-  preview:   TreePreview,
+  scaffold:  PhotoScaffoldEditor,
+  materials: MaterialsPanel,
+  clone:     ClonePreview,
+  preview:   ClonePreview,       // legacy alias
   export:    ExportPanel,
   profile:   ProfilePanel,
 }
@@ -50,6 +59,16 @@ export default function App() {
     )
   }
 
+  if (view === 'finishedClone') {
+    return (
+      <div className="app-root">
+        <AnimatePresence mode="wait">
+          <FinishedCloneView key="finishedClone" />
+        </AnimatePresence>
+      </div>
+    )
+  }
+
   const StepComponent = STEP_MAP[step] || CapturePanel
 
   return (
@@ -57,9 +76,9 @@ export default function App() {
       <StepHeader step={step} />
       <main className="app-main">
         <AnimatePresence mode="wait">
-          {step === 'preview' ? (
-            <PreviewErrorBoundary key="preview">
-              <TreePreview />
+          {step === 'clone' || step === 'preview' ? (
+            <PreviewErrorBoundary key="clone">
+              <ClonePreview />
             </PreviewErrorBoundary>
           ) : (
             <StepComponent key={step} />

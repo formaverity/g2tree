@@ -124,7 +124,7 @@ export default function ExportPanel() {
         <pre className="export-preview">{json}</pre>
 
         <div className="panel-footer">
-          <button className="btn-back" onClick={() => setStep('preview')}>
+          <button className="btn-back" onClick={() => setStep('clone')}>
             <ArrowLeft size={16} /> Back
           </button>
         </div>
