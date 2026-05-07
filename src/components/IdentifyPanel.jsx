@@ -64,6 +64,21 @@ export default function IdentifyPanel() {
     userHints.photo_distance_hint,
   ])
 
+  function selectCandidate(c, idx) {
+    const newResult = {
+      ...result,
+      common_name:     c.common_name,
+      scientific_name: c.scientific_name,
+      confidence:      c.score ?? 0,
+      candidates: [
+        { common_name: result.common_name, scientific_name: result.scientific_name, score: result.confidence },
+        ...result.candidates.filter((_, i) => i !== idx),
+      ],
+    }
+    setSpeciesAIResult(newResult)
+    setUserHints({ known_species: c.common_name ?? c.scientific_name ?? '' })
+  }
+
   async function handleIdentifySpecies() {
     if (photos.length === 0) return
     setAiLoading(true)
@@ -152,13 +167,13 @@ export default function IdentifyPanel() {
                   {result.scientific_name && <span className="ai-scientific">{result.scientific_name}</span>}
                 </div>
               )}
-              {result.candidates?.length > 1 && (
+              {result.candidates?.length > 0 && (
                 <div className="ai-candidates">
-                  {result.candidates.slice(1, 4).map((c, i) => (
-                    <div key={i} className="ai-candidate-row">
+                  {result.candidates.map((c, i) => (
+                    <button key={i} className="ai-candidate-row" onClick={() => selectCandidate(c, i)}>
                       <span>{c.common_name ?? c.scientific_name}</span>
                       <ConfidencePill value={c.score ?? 0} />
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}

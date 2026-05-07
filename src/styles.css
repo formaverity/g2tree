@@ -733,6 +733,23 @@ button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  transition: background 0.12s;
+}
+.ai-candidate-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.ai-candidate-row:active {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .ai-candidate-info {
