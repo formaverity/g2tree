@@ -115,6 +115,14 @@ export default function IdentifyPanel() {
         <h2 className="panel-title">Identify</h2>
         <p className="panel-desc">Measure the tree and identify its species before scaffolding.</p>
 
+        {photos.length > 0 && (
+          <div className="ai-photo-strip">
+            {photos.map((p) => (
+              <img key={p.id} src={p.url} className="ai-photo-thumb" alt="" />
+            ))}
+          </div>
+        )}
+
         {/* ── Measurements ─────────────────────────────────────────────── */}
         <div className="estimate-section">
           <StatRow label="Species"      value={estimates.species_guess}     unit=""   confidence={estimates.species_method === 'user_provided' ? null : estimates.species_confidence} badge={estimates.species_method === 'user_provided' ? { text: 'User provided', cls: 'conf-high' } : null} />
@@ -164,14 +172,19 @@ export default function IdentifyPanel() {
               {result.common_name && (
                 <div className="ai-result-name">
                   <span className="ai-common">{result.common_name}</span>
-                  {result.scientific_name && <span className="ai-scientific">{result.scientific_name}</span>}
+                  {result.scientific_name && <em className="ai-scientific">{result.scientific_name}</em>}
                 </div>
               )}
               {result.candidates?.length > 0 && (
                 <div className="ai-candidates">
                   {result.candidates.map((c, i) => (
                     <button key={i} className="ai-candidate-row" onClick={() => selectCandidate(c, i)}>
-                      <span>{c.common_name ?? c.scientific_name}</span>
+                      <div className="ai-candidate-info">
+                        <span className="ai-candidate-name">{c.common_name ?? c.scientific_name}</span>
+                        {c.scientific_name && c.common_name && (
+                          <em className="ai-candidate-sci">{c.scientific_name}</em>
+                        )}
+                      </div>
                       <ConfidencePill value={c.score ?? 0} />
                     </button>
                   ))}

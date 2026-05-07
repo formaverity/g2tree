@@ -590,15 +590,44 @@ button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 }
 
 .ai-result-name {
-  font-size: 16px;
-  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ai-common {
+  font-size: 18px;
+  font-weight: 700;
   color: var(--text);
+  line-height: 1.2;
+}
+
+.ai-scientific {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-dim);
 }
 
 .ai-result-sci {
   font-size: 12px;
   color: var(--text-dim);
   font-style: italic;
+}
+
+.ai-photo-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0 4px;
+}
+
+.ai-photo-thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
 }
 
 
@@ -730,7 +759,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 
 .ai-candidate-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   width: 100%;
