@@ -2,6 +2,30 @@ import { create } from 'zustand'
 
 const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
 
+const DEFAULT_SCAN_STATE = {
+  primaryImage:     null,   // { file, url, exif }
+  barkImage:        null,   // { file, url }
+  detailImage:      null,   // { file, url }
+  scaleImage:       null,   // { file, url }
+  scaleHintFt:      null,   // number — manual DBH/scale entry
+  exifLocation:     null,   // { lat, lng }
+  browserLocation:  null,   // { lat, lng, accuracy }
+  selectedLocation: null,   // { lat, lng, source: 'photo gps'|'device gps'|'manual'|'unknown', accuracyMeters, capturedAt }
+  speciesResult:    null,   // PlantNet result object
+  visionAnalysis:   null,   // canvas-based heuristic analysis (InterpretationOverlay)
+  visionDepth:      null,   // { grid, width, height } — low-res depth grid from ONNX model
+  estimatedMetrics: null,   // { heightFt, dbhIn, canopyFt, species, … }
+  proceduralParams: null,   // derived 3-D model params
+}
+
+function revokeScanUrls(scanState) {
+  const slots = ['primaryImage', 'barkImage', 'detailImage', 'scaleImage']
+  slots.forEach((k) => {
+    const url = scanState?.[k]?.url
+    if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
+  })
+}
+
 const DEFAULT_LANDMARKS = {
   trunk_base:   { x: 0.5,  y: 0.85 },
   trunk_top:    { x: 0.5,  y: 0.35 },
@@ -82,13 +106,15 @@ const useTreeSession = create((set, get) => ({
 
   // Clear all tree data and return to blank capture state.
   resetSession: () => {
-    const { photos, textureSamples } = get()
+    const { photos, textureSamples, scanState } = get()
     photos.forEach((p) => { if (p.url?.startsWith('blob:')) URL.revokeObjectURL(p.url) })
     Object.values(textureSamples).forEach((s) => {
       if (s?.url?.startsWith('blob:')) URL.revokeObjectURL(s.url)
     })
+    revokeScanUrls(scanState)
     set({
       photos:              [],
+      scanState:           { ...DEFAULT_SCAN_STATE },
       landmarks:           { ...DEFAULT_LANDMARKS },
       showScaleRef:        false,
       scaleRealWorldDist:  1.0,
@@ -172,6 +198,15 @@ const useTreeSession = create((set, get) => ({
       step:                 'identify',
       view:                 'workflow',
     })
+  },
+
+  // Scan state — populated by CaptureWizard; committed to photos/speciesAIResult at wizard completion
+  scanState: { ...DEFAULT_SCAN_STATE },
+  setScanState: (partial) =>
+    set((s) => ({ scanState: { ...s.scanState, ...partial }, hasUnsavedChanges: true, isSaved: false })),
+  resetScanState: () => {
+    revokeScanUrls(get().scanState)
+    set({ scanState: { ...DEFAULT_SCAN_STATE } })
   },
 
   // Photos

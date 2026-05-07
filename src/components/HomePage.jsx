@@ -159,8 +159,7 @@ export default function HomePage() {
       exit={{ opacity: 0 }}
     >
       <div className="home-hero">
-        <TreePine size={48} strokeWidth={1} className="home-icon" />
-        <h1 className="home-title">G2Tree</h1>
+        <img src="/g2treelogo.svg" alt="G2Tree" className="home-logo" />
         <p className="home-subtitle">photo-informed procedural tree modeling</p>
       </div>
 

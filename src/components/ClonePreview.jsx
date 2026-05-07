@@ -6,6 +6,7 @@ import { ArrowRight, ArrowLeft, Layers, TreePine } from 'lucide-react'
 import * as THREE from 'three'
 import useTreeSession from '../state/useTreeSession'
 import { buildTreeModelParams } from '../lib/treeModelParams'
+import { photoToProceduralParams } from '../lib/photoToProceduralParams'
 import { loadTextureSafe } from '../lib/threeTextureUtils'
 import { ProceduralTree } from './TreePreview'
 import PreviewErrorBoundary from './PreviewErrorBoundary'
@@ -106,21 +107,25 @@ function ScaffoldClone({ scaffoldGeometry, params, barkMap, leafMap, leafMasked 
   if (!geo) return null
 
   const leaves = scaffoldGeometry?.leafInstances ?? []
+  const lean   = params.trunkLean ?? 0
 
   return (
-    <group position={[0, -params.trunkHeight / 2, 0]}>
-      {geo.trunks.map((s, i)   => <SegMesh key={`t${i}`}  seg={s} color={params.trunkColor}  map={barkMap} />)}
-      {geo.branches.map((s, i) => <SegMesh key={`b${i}`}  seg={s} color={params.trunkColor}  map={barkMap} />)}
+    <group rotation={[0, 0, lean]}>
+      <group position={[0, -params.trunkHeight / 2, 0]}>
+        {geo.trunks.map((s, i)   => <SegMesh key={`t${i}`}  seg={s} color={params.trunkColor}  map={barkMap} />)}
+        {geo.branches.map((s, i) => <SegMesh key={`b${i}`}  seg={s} color={params.trunkColor}  map={barkMap} />)}
 
-      <LeafCloud
-        leaves={leaves}
-        leafMap={leafMap}
-        leafMasked={leafMasked}
-        color={params.canopyColor}
-        opacity={params.canopyDensity * 0.88}
-      />
+        <LeafCloud
+          leaves={leaves}
+          leafMap={leafMap}
+          leafMasked={leafMasked}
+          color={params.canopyColor}
+          opacity={params.canopyDensity * 0.88}
+        />
+      </group>
 
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.002, 0]}>
+      {/* Ground shadow — stays flat regardless of lean */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -params.trunkHeight / 2 + 0.002, 0]}>
         <circleGeometry args={[params.canopyRadius * 0.52, 28]} />
         <meshStandardMaterial color="#1b2e1d" transparent opacity={0.3} />
       </mesh>
@@ -156,6 +161,7 @@ export default function ClonePreview() {
     estimates, treeStructureHints,
     speciesAIResult, userHints,
     textureSamples,
+    scanState,
     scaffoldGeometry,
     previewMode, setPreviewMode,
     setStep,
@@ -199,14 +205,32 @@ export default function ClonePreview() {
     return () => { cancelled = true; loaded?.dispose(); setLeafMap(null); setLeafMasked(false) }
   }, [leafUrl, skipTextures, isMaskedPng])
 
-  const params = useMemo(
-    () => buildTreeModelParams(
+  // Use photo-derived params when scan metrics are available (live-updates from
+  // MetricsReviewPanel), otherwise fall back to the legacy estimates path.
+  const params = useMemo(() => {
+    const m = scanState?.estimatedMetrics
+    if (m?.dbhCm != null) {
+      return photoToProceduralParams({
+        speciesResult:    scanState.speciesResult,
+        estimatedMetrics: m,
+        visionAnalysis:   scanState.visionAnalysis,
+        visionDepth:      scanState.visionDepth,
+        textureSamples,
+      })
+    }
+    return buildTreeModelParams(
       estimates, treeStructureHints,
-      { scientificName: speciesAIResult?.scientific_name ?? '', commonName: speciesAIResult?.common_name ?? userHints?.known_species ?? '' },
+      {
+        scientificName: speciesAIResult?.scientific_name ?? '',
+        commonName:     speciesAIResult?.common_name ?? userHints?.known_species ?? '',
+      },
       textureSamples,
-    ),
-    [estimates, treeStructureHints, speciesAIResult, userHints, textureSamples],
-  )
+    )
+  }, [
+    scanState,
+    textureSamples,
+    estimates, treeStructureHints, speciesAIResult, userHints,
+  ])
 
   const hasScaffold   = !!scaffoldGeometry
   const useScaffold   = hasScaffold && !showFallback

@@ -5,13 +5,17 @@ import { saveCurrentTree } from '../lib/treeRecords'
 import ConfirmLeaveModal from './ConfirmLeaveModal'
 
 const STEPS = [
-  { id: 'capture',   label: 'Capture',   aliases: []                   },
-  { id: 'review',    label: 'Review',    aliases: []                   },
-  { id: 'identify',  label: 'Identify',  aliases: ['estimate']         },
-  { id: 'calibrate', label: 'Calibrate', aliases: []                   },
-  { id: 'scaffold',  label: 'Scaffold',  aliases: []                   },
-  { id: 'materials', label: 'Materials', aliases: []                   },
-  { id: 'clone',     label: 'Clone',     aliases: ['preview']          },
+  { id: 'capture',   label: 'Capture',   aliases: []              },
+  { id: 'review',    label: 'Review',    aliases: []              },
+  { id: 'metrics',   label: 'Metrics',   aliases: []              },
+  { id: 'benefits',  label: 'Benefits',  aliases: []              },
+  { id: 'identify',  label: 'Identify',  aliases: ['estimate']    },
+  { id: 'calibrate', label: 'Calibrate', aliases: []              },
+  { id: 'scaffold',  label: 'Scaffold',  aliases: []              },
+  { id: 'materials', label: 'Materials', aliases: []              },
+  { id: 'clone',     label: 'Clone',     aliases: ['preview']     },
+  { id: 'export',   label: 'Export',    aliases: []              },
+  { id: 'record',   label: 'Record',    aliases: []              },
 ]
 
 function resolveStepIndex(step) {
@@ -93,7 +97,7 @@ export default function StepHeader({ step }) {
           aria-label="G2Tree — return home"
           title="Return home"
         >
-          G2Tree
+          <img src="/g2treelogo.svg" alt="G2Tree" className="step-header-logo" />
         </button>
 
         <nav className="step-nav" aria-label="Workflow steps">

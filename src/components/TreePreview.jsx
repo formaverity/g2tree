@@ -40,6 +40,7 @@ function buildGeometry(params, mode) {
     leafDistribution, canopyDistribution,
     treeType, crownHabit, branchTierCount, patchiness,
     branchDensity,
+    branchAngleBias = 0,   // radians from horizontal; positive = upward
   } = params
 
   const MAX_SEGS    = 140
@@ -105,7 +106,9 @@ function buildGeometry(params, mode) {
     const tierCount = branchTierCount
     const tierStart = isColumnar ? 0.08 : 0.14
     const tierEnd   = 0.91
-    const downSlope = isColumnar ? 0.06 : 0.24
+    // More negative branchAngleBias → steeper droop (conifers are typically -0.32)
+    const baseDroop = isColumnar ? 0.06 : 0.24
+    const downSlope = baseDroop * (1 + Math.max(0, -branchAngleBias) * 0.7)
 
     for (let tier = 0; tier < tierCount; tier++) {
       const t      = tierStart + (tier / Math.max(tierCount - 1, 1)) * (tierEnd - tierStart)
@@ -210,7 +213,10 @@ function buildGeometry(params, mode) {
       broad_irregular: { startT: 0.36, upness: 0.30, spread: 0.95, lenVar: 0.20, gapRate: 0    },
       open_airy:       { startT: 0.46, upness: 0.48, spread: 0.68, lenVar: 0.13, gapRate: 0.28 },
     }
-    const h = HABITS[crownHabit] || HABITS.rounded
+    // branchAngleBias (radians) biases branch upness: +0.26 typical deciduous, -0.32 conifer
+    const base = HABITS[crownHabit] || HABITS.rounded
+    const upnessBias = Math.sin(Math.abs(branchAngleBias)) * (branchAngleBias >= 0 ? 1 : -1) * 0.5
+    const h = { ...base, upness: Math.max(0.10, Math.min(0.95, base.upness + upnessBias)) }
 
     function growBranches(attachPt, trunkDirArr, pCount, lengthScale) {
       if (isSimple || pCount === 0) return
@@ -384,7 +390,10 @@ export function ProceduralTree({ params, mode, barkMap, leafMap, leafMasked }) {
     return new THREE.BufferAttribute(geo.speckles, 3)
   }, [geo.speckles])
 
+  const lean = params.trunkLean ?? 0
+
   return (
+    <group rotation={[0, 0, lean]}>
     <group position={[0, -params.trunkHeight / 2, 0]}>
       {geo.trunks.map((s, i)   => <SegMesh key={`t${i}`} seg={s} color={params.trunkColor} map={barkMap} />)}
       {geo.branches.map((s, i) => <SegMesh key={`b${i}`} seg={s} color={params.trunkColor} map={barkMap} />)}
@@ -417,6 +426,7 @@ export function ProceduralTree({ params, mode, barkMap, leafMap, leafMasked }) {
         <circleGeometry args={[params.canopyRadius * 0.52, 28]} />
         <meshStandardMaterial color="#1b2e1d" transparent opacity={0.32} />
       </mesh>
+    </group>
     </group>
   )
 }

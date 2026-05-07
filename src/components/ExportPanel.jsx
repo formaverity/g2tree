@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Copy, Download, Box, Send } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Copy, Download, Box, Send } from 'lucide-react'
 import useTreeSession from '../state/useTreeSession'
 import { buildTreeModelParams } from '../lib/treeModelParams'
 import SaveTreeButton from './SaveTreeButton'
@@ -126,6 +126,9 @@ export default function ExportPanel() {
         <div className="panel-footer">
           <button className="btn-back" onClick={() => setStep('clone')}>
             <ArrowLeft size={16} /> Back
+          </button>
+          <button className="btn-next" onClick={() => setStep('record')}>
+            Save Record <ArrowRight size={16} />
           </button>
         </div>
       </div>

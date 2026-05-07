@@ -1,51 +1,149 @@
 /**
  * Supabase CRUD for saved tree records and field photos.
  *
- * g2tree_trees columns used:
+ * g2tree_trees columns used (run supabase_migration.sql before deploying new columns):
  *   user_id, display_name, common_name, scientific_name,
  *   species_confidence, health_status, health_confidence,
- *   lat, lng, observed_at,
- *   dbh_in, height_ft, canopy_width_ft, age_class,
+ *   lat, lng, location_source, observed_at,
+ *   dbh_in, height_ft, canopy_width_ft, age_class,     ← legacy imperial
+ *   dbh_cm, height_m, crown_spread_m,                  ← SI from scanState
+ *   health_score, canopy_density,
+ *   ecological_benefits, procedural_params, vision_analysis,
  *   landmark_data, estimate_data, structure_hints, model_params, ai_results,
  *   clone_status, clone_data, texture_samples, source_photo_summary,
- *   finished_at, notes
+ *   finished_at, updated_at, notes
  *
- * Storage paths (bucket: g2tree-photos):
- *   users/{userId}/trees/{treeId}/photos/{photoId}.{ext}
- *   users/{userId}/trees/{treeId}/textures/{type}.{ext}
+ * Storage bucket: g2tree-photos
+ *   users/{userId}/trees/{treeId}/photos/{photoId}.{ext}    ← wizard photo roll
+ *   users/{userId}/trees/{treeId}/scan/{role}.{ext}         ← named scan images
+ *   users/{userId}/trees/{treeId}/textures/{type}.{ext}     ← texture crops
  */
 
 import { supabase, supabaseConfigError } from './supabaseClient'
 import { buildTreeModelParams } from './treeModelParams'
+import { photoToProceduralParams } from './photoToProceduralParams'
+import { estimateEcologicalBenefits } from './ecologicalBenefits'
+import { effectiveValue } from './treeMetrics'
 import { normalizeImageForPlantNet } from './imageNormalize'
 
 function requireSupabase() {
   if (!supabase) throw new Error(supabaseConfigError)
 }
 
+// Strip non-JSON-serializable values (ImageData, TypedArrays, etc.) from an
+// object before storing it as JSONB. Returns null on any failure.
+function safeJsonClone(obj) {
+  if (obj == null) return null
+  try {
+    return JSON.parse(JSON.stringify(obj, (_, v) => {
+      if (v instanceof ImageData) return undefined
+      if (ArrayBuffer.isView(v) && !(v instanceof DataView)) return undefined
+      if (v instanceof ArrayBuffer) return undefined
+      return v
+    }))
+  } catch {
+    return null
+  }
+}
+
+// Keep only the summary fields from visionAnalysis — raw pixel arrays are large.
+function summarizeVisionAnalysis(va) {
+  if (!va) return null
+  const {
+    // Include structural geometry + classification percentages
+    trunkLine, canopyEllipse, canopyBounds,
+    pixelClassification, asymmetry, leafDistribution,
+    // Exclude: any field whose value is an array of pixel coords
+    ...rest
+  } = va
+  return safeJsonClone({
+    trunkLine,
+    canopyEllipse,
+    canopyBounds,
+    asymmetry,
+    leafDistribution,
+    pixelSummary: pixelClassification ? {
+      skyPct:     pixelClassification.skyPct,
+      foliagePct: pixelClassification.foliagePct,
+      trunkPct:   pixelClassification.trunkPct,
+    } : null,
+    ...rest,
+  })
+}
+
 function buildTreeInsertPayload(state, userId) {
   const {
-    photos,
+    photos             = [],
     landmarks,
     estimates,
     treeStructureHints,
     speciesAIResult,
     userHints,
-    cloneStatus = 'draft',
-    cloneData   = {},
-    finishedAt  = null,
+    textureSamples,
+    scanState          = {},
+    cloneStatus        = 'draft',
+    cloneData          = {},
+    finishedAt         = null,
   } = state
 
-  const species     = speciesAIResult?.common_name ?? estimates?.species_guess ?? userHints?.known_species ?? null
-  const displayName = species
+  // ── Species labels ───────────────────────────────────────────────────────────
+  const effectiveSpecies = scanState.speciesResult ?? speciesAIResult
+  const species          = effectiveSpecies?.common_name
+    ?? estimates?.species_guess
+    ?? userHints?.known_species
+    ?? null
+  const displayName      = species
     ? `${species} — ${new Date().toLocaleDateString()}`
     : `Tree — ${new Date().toLocaleDateString()}`
 
+  // ── Legacy model params ──────────────────────────────────────────────────────
   const modelParams = estimates
     ? buildTreeModelParams(estimates, treeStructureHints)
     : null
 
-  // Serialize photos without blob/object-URL fields for the DB summary
+  // ── Scan-state derived SI metrics ────────────────────────────────────────────
+  const metrics         = scanState.estimatedMetrics ?? null
+  const dbhCm           = metrics ? effectiveValue(metrics, 'dbhCm')         : null
+  const heightM         = metrics ? effectiveValue(metrics, 'heightM')        : null
+  const crownM          = metrics ? effectiveValue(metrics, 'crownSpreadM')   : null
+  const healthScore     = metrics?.healthScore   ?? null
+  const canopyDensity   = metrics?.canopyDensity ?? null
+
+  // ── Location — prefer selectedLocation, fall back to EXIF GPS ───────────────
+  const loc             = scanState.selectedLocation
+  const lat             = loc?.lat  ?? photos[0]?.exif?.gps?.lat ?? null
+  const lng             = loc?.lng  ?? photos[0]?.exif?.gps?.lng ?? null
+  const locationSource  = loc?.source ?? null
+
+  // ── Ecological benefits (computed from SI metrics) ───────────────────────────
+  const ecoBenefits = (dbhCm != null) ? estimateEcologicalBenefits({
+    speciesResult: effectiveSpecies,
+    dbhCm,
+    heightM:       heightM      ?? 8,
+    crownSpreadM:  crownM       ?? 5,
+    canopyDensity: canopyDensity ?? 65,
+    healthScore:   healthScore   ?? 75,
+    confidence:    metrics?.confidence ?? {},
+  }) : null
+
+  // ── Procedural params (photo-derived preferred, legacy fallback) ─────────────
+  let proceduralParams = null
+  if (dbhCm != null) {
+    proceduralParams = safeJsonClone(photoToProceduralParams({
+      speciesResult:    scanState.speciesResult ?? speciesAIResult,
+      estimatedMetrics: metrics,
+      visionAnalysis:   scanState.visionAnalysis,
+      visionDepth:      scanState.visionDepth,
+      textureSamples,
+    }))
+  } else if (estimates) {
+    proceduralParams = safeJsonClone(modelParams)
+  }
+
+  // ── Vision analysis summary ──────────────────────────────────────────────────
+  const visionAnalysisSummary = summarizeVisionAnalysis(scanState.visionAnalysis)
+
+  // ── Photo roll summary ───────────────────────────────────────────────────────
   const sourcePhotoSummary = (photos ?? []).map((p, i) => ({
     id:          p.id,
     storagePath: p.storagePath ?? null,
@@ -61,23 +159,41 @@ function buildTreeInsertPayload(state, userId) {
   return {
     user_id:              userId,
     display_name:         displayName,
-    common_name:          speciesAIResult?.common_name      ?? null,
-    scientific_name:      speciesAIResult?.scientific_name  ?? null,
-    species_confidence:   speciesAIResult?.confidence       ?? estimates?.species_confidence ?? null,
-    health_status:        estimates?.health_status          ?? null,
-    health_confidence:    estimates?.health_confidence      ?? null,
-    lat:                  photos[0]?.exif?.gps?.lat         ?? null,
-    lng:                  photos[0]?.exif?.gps?.lng         ?? null,
-    observed_at:          photos[0]?.exif?.datetime         ?? null,
-    dbh_in:               estimates?.dbh_in                 ?? null,
-    height_ft:            estimates?.height_ft              ?? null,
-    canopy_width_ft:      estimates?.canopy_width_ft        ?? null,
-    age_class:            estimates?.age_class              ?? null,
+    common_name:          effectiveSpecies?.common_name      ?? null,
+    scientific_name:      effectiveSpecies?.scientific_name  ?? null,
+    species_confidence:   effectiveSpecies?.confidence
+      ?? estimates?.species_confidence ?? null,
+    health_status:        estimates?.health_status  ?? null,
+    health_confidence:    estimates?.health_confidence ?? null,
+    lat,
+    lng,
+    location_source:      locationSource,
+    observed_at:          photos[0]?.exif?.datetime ?? null,
+
+    // Legacy imperial fields
+    dbh_in:               estimates?.dbh_in          ?? null,
+    height_ft:            estimates?.height_ft        ?? null,
+    canopy_width_ft:      estimates?.canopy_width_ft  ?? null,
+    age_class:            estimates?.age_class ?? metrics?.ageClass ?? null,
+
+    // SI scan-state fields
+    dbh_cm:               dbhCm,
+    height_m:             heightM,
+    crown_spread_m:       crownM,
+    health_score:         healthScore,
+    canopy_density:       canopyDensity,
+
+    // JSONB
+    ecological_benefits:  ecoBenefits,
+    procedural_params:    proceduralParams,
+    vision_analysis:      visionAnalysisSummary,
+
+    // Legacy blobs
     landmark_data:        landmarks,
     estimate_data:        estimates,
     structure_hints:      treeStructureHints,
     model_params:         modelParams,
-    ai_results:           speciesAIResult ?? null,
+    ai_results:           effectiveSpecies ?? null,
     clone_status:         cloneStatus,
     clone_data:           cloneData,
     finished_at:          finishedAt,
@@ -85,6 +201,15 @@ function buildTreeInsertPayload(state, userId) {
     notes:                null,
   }
 }
+
+// ── Named scan image slots ────────────────────────────────────────────────────
+
+const SCAN_SLOTS = [
+  { key: 'primaryImage', role: 'primary' },
+  { key: 'barkImage',    role: 'bark'    },
+  { key: 'detailImage',  role: 'detail'  },
+  { key: 'scaleImage',   role: 'scale'   },
+]
 
 /**
  * Save or update the current session as a tree record.
@@ -96,9 +221,10 @@ export async function saveCurrentTree(state) {
   const { data: { user }, error: userError } = await supabase.auth.getUser()
   if (userError || !user) throw new Error('Not signed in')
 
-  const { photos, textureSamples, currentTreeId } = state
+  const { photos, textureSamples, scanState, currentTreeId } = state
   const payload = buildTreeInsertPayload(state, user.id)
 
+  // ── Upsert tree row ──────────────────────────────────────────────────────────
   let tree
   if (currentTreeId) {
     const { user_id: _, ...updatePayload } = payload
@@ -121,15 +247,15 @@ export async function saveCurrentTree(state) {
     tree = data
   }
 
-  const treeId          = tree.id
-  const uploadedPhotos  = []
-  const textureMeta     = {}
+  const treeId         = tree.id
+  const uploadedPhotos = []
+  const textureMeta    = {}
+  const scanImageMeta  = {}
 
-  // ── Upload photos ────────────────────────────────────────────────────────────
+  // ── Upload wizard photo roll ─────────────────────────────────────────────────
   for (let i = 0; i < photos.length; i++) {
     const photo = photos[i]
 
-    // Already uploaded — carry forward the existing metadata
     if (photo.persisted && photo.storagePath) {
       uploadedPhotos.push({
         id:          photo.id,
@@ -188,12 +314,34 @@ export async function saveCurrentTree(state) {
     }
   }
 
-  // ── Upload textures ──────────────────────────────────────────────────────────
+  // ── Upload named scan images (primary / bark / detail / scale) ───────────────
+  for (const { key, role } of SCAN_SLOTS) {
+    const img = scanState?.[key]
+    if (!img?.file) continue
+
+    try {
+      const ext         = img.file.type === 'image/png' ? 'png' : 'jpg'
+      const storagePath = `users/${user.id}/trees/${treeId}/scan/${role}.${ext}`
+
+      const { error: uploadError } = await supabase.storage
+        .from('g2tree-photos')
+        .upload(storagePath, img.file, { contentType: img.file.type, upsert: true })
+
+      if (!uploadError) {
+        scanImageMeta[role] = { storagePath, mimeType: img.file.type }
+      } else {
+        console.warn(`Scan image upload (${role}) failed:`, uploadError.message)
+      }
+    } catch (err) {
+      console.warn(`Scan image processing (${role}) failed:`, err.message)
+    }
+  }
+
+  // ── Upload texture crops ─────────────────────────────────────────────────────
   for (const type of ['bark', 'leaf', 'canopy']) {
     const sample = textureSamples?.[type]
     if (!sample) continue
 
-    // Already persisted — carry forward metadata
     if (sample.persisted && sample.storagePath) {
       textureMeta[type] = {
         storagePath:    sample.storagePath,
@@ -238,14 +386,16 @@ export async function saveCurrentTree(state) {
     }
   }
 
-  // Write storage metadata back to the tree row
-  if (uploadedPhotos.length > 0 || Object.keys(textureMeta).length > 0) {
+  // ── Write storage metadata back to the tree row ──────────────────────────────
+  const storageUpdate = {}
+  if (uploadedPhotos.length > 0) storageUpdate.source_photo_summary = uploadedPhotos
+  if (Object.keys(textureMeta).length > 0) storageUpdate.texture_samples = textureMeta
+  if (Object.keys(scanImageMeta).length > 0) storageUpdate.scan_image_meta = scanImageMeta
+
+  if (Object.keys(storageUpdate).length > 0) {
     await supabase
       .from('g2tree_trees')
-      .update({
-        source_photo_summary: uploadedPhotos,
-        texture_samples:      textureMeta,
-      })
+      .update(storageUpdate)
       .eq('id', treeId)
       .eq('user_id', user.id)
   }
@@ -255,7 +405,6 @@ export async function saveCurrentTree(state) {
 
 /**
  * List saved trees for the current user, newest first.
- * Includes clone_status, dbh_in, height_ft for richer cards.
  */
 export async function listMyTrees() {
   requireSupabase()
@@ -263,7 +412,8 @@ export async function listMyTrees() {
     .from('g2tree_trees')
     .select(
       'id, display_name, common_name, scientific_name, created_at, ' +
-      'estimate_data, clone_status, dbh_in, height_ft, source_photo_summary'
+      'estimate_data, clone_status, dbh_in, height_ft, dbh_cm, height_m, ' +
+      'health_score, ecological_benefits, source_photo_summary'
     )
     .order('created_at', { ascending: false })
 
@@ -279,8 +429,6 @@ export async function listMyTrees() {
 /**
  * Load a full tree record, restore signed URLs for photos and textures.
  * Returns { tree, photos }
- * tree has app-state keys overlaid (name, landmarks, estimates, speciesAIResult, …)
- * photos are persisted objects: { id, url, storagePath, file:null, exif, persisted:true, … }
  */
 export async function loadTree(id) {
   requireSupabase()
@@ -299,9 +447,7 @@ export async function loadTree(id) {
     .eq('tree_id', id)
     .order('created_at', { ascending: true })
 
-  const photos = []
-
-  // Build a quick set of storage paths we've already resolved
+  const photos       = []
   const resolvedPaths = new Set()
 
   for (const row of (photoRows ?? [])) {
@@ -325,8 +471,7 @@ export async function loadTree(id) {
     }
   }
 
-  // Also resolve any photos captured in source_photo_summary but not in the photos table
-  // (can happen when storage_path was saved but no g2tree_tree_photos row exists)
+  // Resolve photos captured in source_photo_summary but missing from photos table
   for (const summary of (tree.source_photo_summary ?? [])) {
     if (!summary.storagePath || resolvedPaths.has(summary.storagePath)) continue
     const { data: urlData } = await supabase.storage
@@ -366,8 +511,6 @@ export async function loadTree(id) {
       textureSamples[type] = {
         storagePath:    meta.storagePath,
         url:            urlData.signedUrl,
-        // dataUrl alias so TreePreview's isDataUrl fallback can be avoided;
-        // threeTextureUtils now accepts https:// URLs directly
         dataUrl:        urlData.signedUrl,
         width:          meta.width          ?? null,
         height:         meta.height         ?? null,
@@ -383,15 +526,15 @@ export async function loadTree(id) {
   // ── Map DB column names to app-state keys ────────────────────────────────────
   const mappedTree = {
     ...tree,
-    name:              tree.display_name,
-    landmarks:         tree.landmark_data,
-    estimates:         tree.estimate_data,
+    name:               tree.display_name,
+    landmarks:          tree.landmark_data,
+    estimates:          tree.estimate_data,
     treeStructureHints: tree.structure_hints,
-    modelParams:       tree.model_params,
-    speciesAIResult:   tree.ai_results,
-    cloneStatus:       tree.clone_status   ?? 'draft',
-    cloneData:         tree.clone_data     ?? {},
-    finishedAt:        tree.finished_at    ?? null,
+    modelParams:        tree.model_params,
+    speciesAIResult:    tree.ai_results,
+    cloneStatus:        tree.clone_status   ?? 'draft',
+    cloneData:          tree.clone_data     ?? {},
+    finishedAt:         tree.finished_at    ?? null,
     textureSamples,
   }
 

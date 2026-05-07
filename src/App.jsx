@@ -4,7 +4,7 @@ import useTreeSession from './state/useTreeSession'
 import { supabase } from './lib/supabaseClient'
 import HomePage from './components/HomePage'
 import StepHeader from './components/StepHeader'
-import CapturePanel from './components/CapturePanel'
+import CaptureWizard from './components/CaptureWizard'
 import PhotoReview from './components/PhotoReview'
 import LandmarkCanvas from './components/LandmarkCanvas'
 import PreviewErrorBoundary from './components/PreviewErrorBoundary'
@@ -12,24 +12,30 @@ import IdentifyPanel from './components/IdentifyPanel'
 import PhotoScaffoldEditor from './components/PhotoScaffoldEditor'
 import MaterialsPanel from './components/MaterialsPanel'
 import ClonePreview from './components/ClonePreview'
+import EcologicalScannerView from './components/EcologicalScannerView'
+import EcologicalRolePanel from './components/EcologicalRolePanel'
 import ExportPanel from './components/ExportPanel'
+import SaveRecordPanel from './components/SaveRecordPanel'
 import ProfilePanel from './components/ProfilePanel'
 import FinishedCloneView from './components/FinishedCloneView'
+import MetricsReviewPanel from './components/MetricsReviewPanel'
 import './styles.css'
 
 // Map step IDs → panel components.
-// Old IDs (estimate, preview, scaffold) redirect to new equivalents.
 const STEP_MAP = {
-  capture:   CapturePanel,
+  capture:   CaptureWizard,
   review:    PhotoReview,
+  metrics:   MetricsReviewPanel,  // ecological metrics review — new wizard path
+  benefits:  EcologicalRolePanel, // i-Tree-inspired ecological benefits
   identify:  IdentifyPanel,
-  estimate:  IdentifyPanel,      // legacy alias
+  estimate:  IdentifyPanel,       // legacy alias
   calibrate: LandmarkCanvas,
   scaffold:  PhotoScaffoldEditor,
   materials: MaterialsPanel,
-  clone:     ClonePreview,
-  preview:   ClonePreview,       // legacy alias
+  clone:     EcologicalScannerView,
+  preview:   EcologicalScannerView,  // legacy alias
   export:    ExportPanel,
+  record:    SaveRecordPanel,
   profile:   ProfilePanel,
 }
 
@@ -78,7 +84,7 @@ export default function App() {
         <AnimatePresence mode="wait">
           {step === 'clone' || step === 'preview' ? (
             <PreviewErrorBoundary key="clone">
-              <ClonePreview />
+              <EcologicalScannerView />
             </PreviewErrorBoundary>
           ) : (
             <StepComponent key={step} />

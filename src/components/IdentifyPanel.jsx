@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, ArrowLeft, AlertTriangle, Leaf, ChevronDown, ChevronUp, Info } from 'lucide-react'
+import { ArrowRight, ArrowLeft, AlertTriangle, Leaf, ChevronDown, ChevronUp, Info, Check } from 'lucide-react'
 import useTreeSession from '../state/useTreeSession'
 import { estimateTree } from '../lib/estimateTree'
 import { identifySpeciesFromPhoto } from '../lib/speciesAI'
@@ -64,8 +64,12 @@ export default function IdentifyPanel() {
     userHints.photo_distance_hint,
   ])
 
+  function applySpecies(commonName, scientificName) {
+    setUserHints({ known_species: commonName ?? scientificName ?? '' })
+  }
+
   function selectCandidate(c, idx) {
-    const newResult = {
+    setSpeciesAIResult({
       ...result,
       common_name:     c.common_name,
       scientific_name: c.scientific_name,
@@ -74,9 +78,8 @@ export default function IdentifyPanel() {
         { common_name: result.common_name, scientific_name: result.scientific_name, score: result.confidence },
         ...result.candidates.filter((_, i) => i !== idx),
       ],
-    }
-    setSpeciesAIResult(newResult)
-    setUserHints({ known_species: c.common_name ?? c.scientific_name ?? '' })
+    })
+    applySpecies(c.common_name, c.scientific_name)
   }
 
   async function handleIdentifySpecies() {
@@ -92,6 +95,9 @@ export default function IdentifyPanel() {
         lng: gps?.lng ?? null,
       })
       setSpeciesAIResult(result)
+      if (result.enabled !== false && result.common_name) {
+        applySpecies(result.common_name, result.scientific_name)
+      }
     } catch (err) {
       setAiError(err.message ?? 'Identification failed. Check your connection.')
     } finally {
@@ -163,36 +169,53 @@ export default function IdentifyPanel() {
 
           {aiError && <div className="ai-result-error">{aiError}</div>}
 
-          {result && (
-            <div className="ai-result-card">
-              <div className="ai-result-header">
-                <span className="ai-result-provider">{result.provider === 'none' ? 'AI not configured' : result.provider}</span>
-                {result.confidence > 0 && <ConfidencePill value={result.confidence} />}
+          {result && (() => {
+            const applied = userHints.known_species?.trim()
+            return (
+              <div className="ai-result-card">
+                <div className="ai-result-header">
+                  <span className="ai-result-provider">{result.provider === 'none' ? 'AI not configured' : result.provider}</span>
+                </div>
+
+                {result.common_name && (
+                  <button className="ai-result-top-row" onClick={() => applySpecies(result.common_name, result.scientific_name)}>
+                    <div className="ai-result-name">
+                      <span className="ai-common">{result.common_name}</span>
+                      {result.scientific_name && <em className="ai-scientific">{result.scientific_name}</em>}
+                    </div>
+                    <div className="ai-result-top-actions">
+                      {result.confidence > 0 && <ConfidencePill value={result.confidence} />}
+                      {applied === result.common_name && <Check size={14} className="ai-check-icon" />}
+                    </div>
+                  </button>
+                )}
+
+                {result.candidates?.length > 0 && (
+                  <div className="ai-candidates">
+                    {result.candidates.map((c, i) => {
+                      const name = c.common_name ?? c.scientific_name
+                      return (
+                        <button key={i} className="ai-candidate-row" onClick={() => selectCandidate(c, i)}>
+                          <div className="ai-candidate-info">
+                            <span className="ai-candidate-name">{name}</span>
+                            {c.scientific_name && c.common_name && (
+                              <em className="ai-candidate-sci">{c.scientific_name}</em>
+                            )}
+                          </div>
+                          <div className="ai-result-top-actions">
+                            <ConfidencePill value={c.score ?? 0} />
+                            {applied === name && <Check size={12} className="ai-check-icon" />}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {result.notes?.map((n, i) => <div key={i} className="ai-result-note">{n}</div>)}
               </div>
-              {result.common_name && (
-                <div className="ai-result-name">
-                  <span className="ai-common">{result.common_name}</span>
-                  {result.scientific_name && <em className="ai-scientific">{result.scientific_name}</em>}
-                </div>
-              )}
-              {result.candidates?.length > 0 && (
-                <div className="ai-candidates">
-                  {result.candidates.map((c, i) => (
-                    <button key={i} className="ai-candidate-row" onClick={() => selectCandidate(c, i)}>
-                      <div className="ai-candidate-info">
-                        <span className="ai-candidate-name">{c.common_name ?? c.scientific_name}</span>
-                        {c.scientific_name && c.common_name && (
-                          <em className="ai-candidate-sci">{c.scientific_name}</em>
-                        )}
-                      </div>
-                      <ConfidencePill value={c.score ?? 0} />
-                    </button>
-                  ))}
-                </div>
-              )}
-              {result.notes?.map((n, i) => <div key={i} className="ai-result-note">{n}</div>)}
-            </div>
-          )}
+            )
+          })()}
         </div>
 
         {/* ── Field Hints ───────────────────────────────────────────────── */}
