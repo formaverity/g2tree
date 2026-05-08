@@ -330,6 +330,162 @@ button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 }
 .meta-dim { color: var(--text-muted); font-style: italic; }
 
+/* ── Review card — calibration selection ── */
+
+.review-card-selected {
+  border-color: var(--green-mid);
+  background: #1a2e1c;
+}
+
+.review-photo-label {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: #0f1410cc;
+  color: var(--text-dim);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.review-calib-badge {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--green-dim);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.review-use-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  text-align: left;
+  margin-top: 2px;
+}
+.review-use-btn:hover { border-color: var(--green-mid); color: var(--green-mid); }
+
+/* ── Annotation first-pass banner ── */
+
+.annot-first-pass {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+}
+
+.annot-first-pass--running {
+  background: #1a2a1c;
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+.annot-first-pass--done {
+  background: #162414;
+  border-color: var(--green-dim);
+  color: var(--green-bright);
+}
+
+.annot-first-pass--failed {
+  background: #221510;
+  border-color: #5a3020;
+  color: #d4826a;
+}
+
+.annot-rerun-btn {
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  opacity: 0.7;
+  margin-left: auto;
+  transition: opacity 0.15s;
+}
+.annot-rerun-btn:hover { opacity: 1; }
+.annot-rerun-btn + .annot-rerun-btn { margin-left: 6px; }
+
+/* ── Annotation action row ── */
+
+.annot-action-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── Scaffold mode bar ── */
+
+.scaffold-mode-bar {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 0;
+}
+
+/* ── Species chip in scaffold editor ── */
+
+.scaffold-species-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.scaffold-species-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.scaffold-species-name {
+  flex: 1;
+  color: var(--text);
+  font-style: italic;
+}
+
+.scaffold-species-change {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.scaffold-species-change:hover { border-color: var(--green-mid); color: var(--green-mid); }
+
 /* ── Landmark Canvas ── */
 
 .landmark-point-list {

@@ -139,6 +139,8 @@ const useTreeSession = create((set, get) => ({
       canopyProfiles:      null,
       canopyDensityHint:   'medium',
       trunkCharacter:      'straight',
+      calibrationPhotoIndex: 0,
+      annotations: { treeOutline: [], crownOutline: [], trunkLine: [], primaryBranches: [] },
       step:                'capture',
     })
   },
@@ -169,6 +171,8 @@ const useTreeSession = create((set, get) => ({
     canopyProfiles       = null,
     canopyDensityHint    = 'medium',
     trunkCharacter       = 'straight',
+    calibrationPhotoIndex = 0,
+    annotations,
     id,
   }) => {
     set({
@@ -191,6 +195,8 @@ const useTreeSession = create((set, get) => ({
       canopyProfiles,
       canopyDensityHint,
       trunkCharacter,
+      calibrationPhotoIndex,
+      annotations:          annotations ?? { treeOutline: [], crownOutline: [], trunkLine: [], primaryBranches: [] },
       currentTreeId:        id,
       isSaved:              true,
       hasUnsavedChanges:    false,
@@ -288,6 +294,20 @@ const useTreeSession = create((set, get) => ({
   setScaffoldGeometry: (geometry) => set({ scaffoldGeometry: geometry }),
   setTrunkAxisOverride: (pts)     => set({ trunkAxisOverride: pts }),
   clearScaffold: () => set({ photoScaffold: null, scaffoldGeometry: null, trunkAxisOverride: null }),
+
+  // Calibration photo selection
+  calibrationPhotoIndex: 0,
+  setCalibrationPhotoIndex: (i) => set({ calibrationPhotoIndex: i }),
+
+  // Annotation layers populated by first-pass analysis and user editing
+  annotations: {
+    treeOutline:     [],
+    crownOutline:    [],
+    trunkLine:       [],
+    primaryBranches: [],
+  },
+  setAnnotations: (partial) =>
+    set((s) => ({ annotations: { ...s.annotations, ...partial }, hasUnsavedChanges: true, isSaved: false })),
 
   // Scaffold editor gesture state
   branchGestures:    [],

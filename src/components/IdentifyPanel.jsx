@@ -69,14 +69,16 @@ export default function IdentifyPanel() {
   }
 
   function selectCandidate(c, idx) {
+    const current = speciesAIResult
+    if (!current) return
     setSpeciesAIResult({
-      ...result,
+      ...current,
       common_name:     c.common_name,
       scientific_name: c.scientific_name,
       confidence:      c.score ?? 0,
       candidates: [
-        { common_name: result.common_name, scientific_name: result.scientific_name, score: result.confidence },
-        ...result.candidates.filter((_, i) => i !== idx),
+        { common_name: current.common_name, scientific_name: current.scientific_name, score: current.confidence },
+        ...(current.candidates ?? []).filter((_, i) => i !== idx),
       ],
     })
     applySpecies(c.common_name, c.scientific_name)
@@ -118,8 +120,8 @@ export default function IdentifyPanel() {
       exit={{ opacity: 0, y: -16 }}
     >
       <div className="panel-body">
-        <h2 className="panel-title">Identify</h2>
-        <p className="panel-desc">Measure the tree and identify its species before scaffolding.</p>
+        <h2 className="panel-title">Confirm Species</h2>
+        <p className="panel-desc">Review AI candidates and select the correct species. This feeds the clone and ecological estimates.</p>
 
         {photos.length > 0 && (
           <div className="ai-photo-strip">
@@ -268,11 +270,11 @@ export default function IdentifyPanel() {
         <SaveTreeButton />
 
         <div className="panel-footer">
-          <button className="btn-back" onClick={() => setStep('review')}>
-            <ArrowLeft size={16} /> Review
+          <button className="btn-back" onClick={() => setStep('scaffold')}>
+            <ArrowLeft size={16} /> Back
           </button>
-          <button className="btn-next" onClick={() => setStep('calibrate')}>
-            Calibrate <ArrowRight size={16} />
+          <button className="btn-next" onClick={() => setStep('clone')}>
+            Generate Clone <ArrowRight size={16} />
           </button>
         </div>
       </div>

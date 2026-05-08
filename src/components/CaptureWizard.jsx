@@ -12,24 +12,24 @@ import { estimateTreeMetrics } from '../lib/treeMetrics'
 const STEPS = [
   {
     id:       'primary',
-    label:    'Whole Tree',
-    hint:     'Stand back 20–30 ft · full crown visible · good natural light',
+    label:    'Full Tree Photo',
+    hint:     'Step back and capture the whole tree — trunk, crown, and base if possible. This image drives calibration and clone structure.',
     slot:     'primaryImage',
     readExif: true,
     required: true,
   },
   {
     id:       'bark',
-    label:    'Bark Texture',
-    hint:     'Close-up of trunk bark · fill the frame · sharp focus',
+    label:    'Bark / Trunk Detail',
+    hint:     'Close-up of trunk bark. Detail images improve species ID, bark texture, and health signals.',
     slot:     'barkImage',
     readExif: false,
     required: false,
   },
   {
     id:       'detail',
-    label:    'Leaf / Flower / Fruit',
-    hint:     'Detail shot of leaf, flower, or fruit · best for species ID',
+    label:    'Leaf, Flower, or Fruit',
+    hint:     'Best organ for species ID. A clear leaf or fruit photo significantly improves identification accuracy.',
     slot:     'detailImage',
     readExif: false,
     required: false,
@@ -37,15 +37,15 @@ const STEPS = [
   {
     id:       'scale',
     label:    'Scale Reference',
-    hint:     'Optional: person, tool, or known object beside the trunk',
+    hint:     'Optional: person, measuring tape, or known object beside the trunk for size calibration.',
     slot:     'scaleImage',
     readExif: false,
     required: false,
     optional: true,
   },
-  { id: 'location',  label: 'Location',   hint: 'Confirm where this tree is standing' },
+  { id: 'location',  label: 'Location',    hint: 'Confirm where this tree is standing' },
   { id: 'analysis',  label: 'AI Analysis', hint: 'Species identification from your photos' },
-  { id: 'clone',     label: 'Clone Preview', hint: 'Digital summary — ready for detailed refinement' },
+  { id: 'clone',     label: 'Summary',     hint: 'Digital summary — ready for detailed refinement' },
 ]
 
 const PHOTO_STEPS  = STEPS.slice(0, 4)
@@ -123,9 +123,7 @@ export default function CaptureWizard() {
       setUserHints({ known_species: scanState.speciesResult.common_name })
     }
 
-    // Navigate to the metrics review step so the user can verify estimates
-    // before proceeding to the scaffold/clone workflow.
-    setStep('metrics')
+    setStep('review')
   }
 
   // ── Next-button availability ────────────────────────────────────────────────
