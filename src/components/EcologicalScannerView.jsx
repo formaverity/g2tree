@@ -598,9 +598,15 @@ function ModeInfo({ mode, metrics, species, maskData, visionDepth }) {
 
 export default function EcologicalScannerView() {
   const {
-    scanState, scaffoldGeometry, textureSamples, setStep,
+    scanState, scaffoldGeometry, textureSamples,
     estimates, treeStructureHints, speciesAIResult, userHints,
+    setStep, setReturnStep,
   } = useTreeSession()
+
+  function goToScaffold() {
+    setReturnStep('clone')
+    setStep('scaffold')
+  }
 
   const [modeIdx, setModeIdx] = useState(0)
   const [maskData, setMaskData]   = useState(null)
@@ -727,8 +733,11 @@ export default function EcologicalScannerView() {
         <SaveTreeButton />
 
         <div className="panel-footer">
-          <button className="btn-back" onClick={() => setStep('materials')}>
-            <ArrowLeft size={16} /> Materials
+          <button className="btn-back" onClick={() => setStep('identify')}>
+            <ArrowLeft size={16} /> Back
+          </button>
+          <button className="btn-secondary" onClick={goToScaffold}>
+            Edit detection
           </button>
           <button className="btn-next" onClick={() => setStep('export')}>
             Export <ArrowRight size={16} />

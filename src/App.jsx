@@ -4,14 +4,15 @@ import useTreeSession from './state/useTreeSession'
 import { supabase } from './lib/supabaseClient'
 import HomePage from './components/HomePage'
 import StepHeader from './components/StepHeader'
-import CaptureWizard from './components/CaptureWizard'
+import BulkCaptureStep from './components/BulkCaptureStep'
+import PhotoLabelGallery from './components/PhotoLabelGallery'
+import ScaleAnchorStep from './components/ScaleAnchorStep'
 import PhotoReview from './components/PhotoReview'
 import LandmarkCanvas from './components/LandmarkCanvas'
 import PreviewErrorBoundary from './components/PreviewErrorBoundary'
 import IdentifyPanel from './components/IdentifyPanel'
 import PhotoScaffoldEditor from './components/PhotoScaffoldEditor'
 import MaterialsPanel from './components/MaterialsPanel'
-import ClonePreview from './components/ClonePreview'
 import EcologicalScannerView from './components/EcologicalScannerView'
 import EcologicalRolePanel from './components/EcologicalRolePanel'
 import ExportPanel from './components/ExportPanel'
@@ -22,21 +23,23 @@ import MetricsReviewPanel from './components/MetricsReviewPanel'
 import './styles.css'
 
 // Map step IDs → panel components.
+// Primary path: capture → label → scale → identify → clone
+// scaffold is an optional detail view accessed from clone ("Edit detection")
 const STEP_MAP = {
-  capture:   CaptureWizard,
-  review:    PhotoReview,
-  metrics:   MetricsReviewPanel,  // ecological metrics review — new wizard path
-  benefits:  EcologicalRolePanel, // i-Tree-inspired ecological benefits
-  identify:  IdentifyPanel,
-  estimate:  IdentifyPanel,       // legacy alias
-  calibrate: LandmarkCanvas,
-  scaffold:  PhotoScaffoldEditor,
-  materials: MaterialsPanel,
-  clone:     EcologicalScannerView,
-  preview:   EcologicalScannerView,  // legacy alias
-  export:    ExportPanel,
-  record:    SaveRecordPanel,
-  profile:   ProfilePanel,
+  capture:  BulkCaptureStep,
+  label:    PhotoLabelGallery,
+  scale:    ScaleAnchorStep,
+  identify: IdentifyPanel,
+  clone:    EcologicalScannerView,
+  // scaffold as detail view — rendered separately below
+  scaffold: PhotoScaffoldEditor,
+  // Aliases
+  estimate: IdentifyPanel,
+  preview:  EcologicalScannerView,
+  // Account / save
+  profile:  ProfilePanel,
+  record:   SaveRecordPanel,
+  export:   ExportPanel,
 }
 
 export default function App() {
@@ -75,7 +78,18 @@ export default function App() {
     )
   }
 
-  const StepComponent = STEP_MAP[step] || CapturePanel
+  const StepComponent = STEP_MAP[step] ?? BulkCaptureStep
+
+  // Scaffold is a full-screen detail view — no StepHeader chrome
+  if (step === 'scaffold') {
+    return (
+      <div className="app-root">
+        <AnimatePresence mode="wait">
+          <PhotoScaffoldEditor key="scaffold" />
+        </AnimatePresence>
+      </div>
+    )
+  }
 
   return (
     <div className="app-root">

@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, ArrowLeft, AlertTriangle, Leaf, ChevronDown, ChevronUp, Info, Check } from 'lucide-react'
+import { ArrowRight, ArrowLeft, AlertTriangle, Leaf, ChevronDown, ChevronUp, Info, Check, Ruler } from 'lucide-react'
 import useTreeSession from '../state/useTreeSession'
 import { estimateTree } from '../lib/estimateTree'
 import { identifySpeciesFromPhoto } from '../lib/speciesAI'
 import { PLANTNET_ORGANS } from '../lib/plantnet'
+import { morphologicalScore } from '../lib/treeModelParams'
 import SaveTreeButton from './SaveTreeButton'
 
 const DBH_METHOD_LABEL = {
@@ -44,8 +45,9 @@ export default function IdentifyPanel() {
   const {
     landmarks, scaleRealWorldDist, showScaleRef,
     photos, estimates, setEstimates,
-    userHints, setUserHints, setUserHint,
+    userHints, setUserHints,
     speciesAIResult, setSpeciesAIResult,
+    estimatedHeightFt, detectedHeightFt, scaleFactorPxPerFt,
     setStep,
   } = useTreeSession()
 
@@ -53,6 +55,9 @@ export default function IdentifyPanel() {
   const [organHint, setOrganHint] = useState('auto')
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError]     = useState(null)
+
+  // Height to use in measurements + morphological ranking
+  const measuredHeightFt = estimatedHeightFt ?? detectedHeightFt ?? null
 
   useEffect(() => {
     const result = estimateTree({ landmarks, scaleRealWorldDist, showScaleRef, photos, userHints })
@@ -63,6 +68,21 @@ export default function IdentifyPanel() {
     userHints.known_species, userHints.site_type,
     userHints.photo_distance_hint,
   ])
+
+  // Re-rank PlantNet candidates by combined PlantNet score × morphological fit
+  const rankedCandidates = useMemo(() => {
+    if (!speciesAIResult?.candidates?.length || !measuredHeightFt) return speciesAIResult?.candidates ?? []
+    return [...speciesAIResult.candidates]
+      .map((c) => ({
+        ...c,
+        morphoScore: morphologicalScore(c.scientific_name ?? '', measuredHeightFt),
+      }))
+      .sort((a, b) => {
+        const scoreA = (a.score ?? 0) * a.morphoScore
+        const scoreB = (b.score ?? 0) * b.morphoScore
+        return scoreB - scoreA
+      })
+  }, [speciesAIResult, measuredHeightFt])
 
   function applySpecies(commonName, scientificName) {
     setUserHints({ known_species: commonName ?? scientificName ?? '' })
@@ -131,11 +151,33 @@ export default function IdentifyPanel() {
           </div>
         )}
 
+        {/* ── Scale-anchored measurements ───────────────────────────────── */}
+        {(measuredHeightFt || scaleFactorPxPerFt) && (
+          <div className="scale-measurements-block">
+            <div className="scale-measurements-header">
+              <Ruler size={13} />
+              <span>Scale-anchored measurements</span>
+            </div>
+            {measuredHeightFt != null && (
+              <div className="scale-measurements-row">
+                <span>Height</span>
+                <strong>{Math.round(measuredHeightFt * 10) / 10} ft</strong>
+              </div>
+            )}
+            {scaleFactorPxPerFt != null && (
+              <div className="scale-measurements-row">
+                <span>Scale</span>
+                <strong>{Math.round(scaleFactorPxPerFt * 10) / 10} px / ft</strong>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Measurements ─────────────────────────────────────────────── */}
         <div className="estimate-section">
           <StatRow label="Species"      value={estimates.species_guess}     unit=""   confidence={estimates.species_method === 'user_provided' ? null : estimates.species_confidence} badge={estimates.species_method === 'user_provided' ? { text: 'User provided', cls: 'conf-high' } : null} />
           <StatRow label="Health"       value={estimates.health_status}     unit=""   confidence={estimates.health_confidence} />
-          <StatRow label="Height"       value={estimates.height_ft}         unit="ft" />
+          <StatRow label="Height"       value={measuredHeightFt != null ? (Math.round(measuredHeightFt * 10) / 10) : estimates.height_ft} unit="ft" />
           <StatRow label="Canopy width" value={estimates.canopy_width_ft}   unit="ft" />
           <StatRow label="DBH"          value={estimates.dbh_in}            unit="in" confidence={estimates.dbh_method === 'user_confirmed' ? null : estimates.dbh_confidence} badge={dbhBadge} />
           <StatRow label="Age class"    value={estimates.age_class}         unit=""   />
@@ -192,10 +234,11 @@ export default function IdentifyPanel() {
                   </button>
                 )}
 
-                {result.candidates?.length > 0 && (
+                {rankedCandidates.length > 0 && (
                   <div className="ai-candidates">
-                    {result.candidates.map((c, i) => {
-                      const name = c.common_name ?? c.scientific_name
+                    {rankedCandidates.map((c, i) => {
+                      const name   = c.common_name ?? c.scientific_name
+                      const morpho = c.morphoScore
                       return (
                         <button key={i} className="ai-candidate-row" onClick={() => selectCandidate(c, i)}>
                           <div className="ai-candidate-info">
@@ -206,6 +249,9 @@ export default function IdentifyPanel() {
                           </div>
                           <div className="ai-result-top-actions">
                             <ConfidencePill value={c.score ?? 0} />
+                            {morpho != null && morpho < 0.7 && (
+                              <span className="morpho-flag" title="Height doesn't match typical range">↕</span>
+                            )}
                             {applied === name && <Check size={12} className="ai-check-icon" />}
                           </div>
                         </button>
@@ -270,7 +316,7 @@ export default function IdentifyPanel() {
         <SaveTreeButton />
 
         <div className="panel-footer">
-          <button className="btn-back" onClick={() => setStep('scaffold')}>
+          <button className="btn-back" onClick={() => setStep('scale')}>
             <ArrowLeft size={16} /> Back
           </button>
           <button className="btn-next" onClick={() => setStep('clone')}>

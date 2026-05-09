@@ -1,21 +1,57 @@
 import { analyzeImage } from './visionAnalysis'
+import { runSAM, isSAMUnavailable } from './ai/sam'
+import { maskToAnnotations } from './ai/structureFromMask'
 
 /**
- * Derives annotation geometry from a tree photo URL via canvas pixel analysis.
- * Returns normalized (0–1) annotation structures suitable for SVG overlay rendering.
+ * Derives annotation geometry from a tree photo URL.
  *
- * On failure returns null — callers must handle the null case gracefully.
+ * Pipeline:
+ *   1. SAM2 / EfficientSAM (if models present) → maskToAnnotations
+ *   2. Heuristic canvas analysis fallback → visionAnalysis
+ *
+ * Returns normalized (0–1) annotation structures for SVG overlay rendering,
+ * or null on total failure.
+ *
+ * @param {string} imageUrl — blob: or data: URL
+ * @param {{ x: number, y: number } | null} [promptPoint] — normalized trunk point
+ *        for SAM. Derived from scale anchor handles when available.
  */
-export async function analyzeTreeImage(imageUrl) {
+export async function analyzeTreeImage(imageUrl, promptPoint = null) {
+  // ── Attempt 1: SAM-based mask extraction ─────────────────────────────────────
+  if (!isSAMUnavailable()) {
+    try {
+      const pt     = promptPoint ?? { x: 0.5, y: 0.6 }
+      const result = await runSAM(imageUrl, pt)
+
+      if (result) {
+        const annotations = maskToAnnotations(result.mask, result.width, result.height)
+        if (annotations.treeOutline.length >= 4) {
+          return {
+            ...annotations,
+            confidence: 0.85,
+            source:     'sam',
+            notes:      [],
+          }
+        }
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // ── Attempt 2: Heuristic canvas pixel analysis ─────────────────────────────
+  return _heuristicAnalysis(imageUrl)
+}
+
+async function _heuristicAnalysis(imageUrl) {
   try {
     const a = await analyzeImage(imageUrl)
     const { subjectBounds: sb, canopyEllipse: ce, trunkLine: tl } = a
 
-    const tx   = tl.x1          // trunk horizontal center
-    const tTop = tl.y1          // upper trunk (crown junction)
-    const tBot = tl.y2          // trunk base
+    const tx   = tl.x1
+    const tTop = tl.y1
+    const tBot = tl.y2
 
-    // ── Tree outline — 7-point convex polygon ─────────────────────────────────
     const treeOutline = [
       { x: sb.x,                    y: Math.min(tBot + 0.04, 0.98) },
       { x: sb.x,                    y: sb.y + sb.height * 0.40     },
@@ -26,7 +62,6 @@ export async function analyzeTreeImage(imageUrl) {
       { x: sb.x + sb.width,         y: Math.min(tBot + 0.04, 0.98) },
     ]
 
-    // ── Crown outline — ellipse approximated as 9-point polygon ──────────────
     const { cx, cy, rx, ry } = ce
     const crownOutline = Array.from({ length: 9 }, (_, i) => {
       const angle = (i / 9) * Math.PI * 2 - Math.PI / 2
@@ -36,20 +71,18 @@ export async function analyzeTreeImage(imageUrl) {
       }
     })
 
-    // ── Trunk line — 3 points ─────────────────────────────────────────────────
     const trunkLine = [
       { x: tx, y: tTop },
       { x: tx, y: tTop + (tBot - tTop) * 0.5 },
       { x: tx, y: tBot },
     ]
 
-    // ── Primary branches — 5 polylines radiating from mid-upper trunk ─────────
     const crownL = sb.x
     const crownR = sb.x + sb.width
     const primaryBranches = Array.from({ length: 5 }, (_, i) => {
       const t    = i / 4
-      const side = i % 2 === 0 ? -1 : 1   // alternate left / right
-      const sY   = tTop + (tBot - tTop) * (0.12 + t * 0.36)  // up to mid-trunk
+      const side = i % 2 === 0 ? -1 : 1
+      const sY   = tTop + (tBot - tTop) * (0.12 + t * 0.36)
       const reach = 0.65 + t * 0.25
       const eX   = side < 0
         ? Math.max(crownL, tx - (tx - crownL) * reach)
@@ -74,7 +107,8 @@ export async function analyzeTreeImage(imageUrl) {
       canopyEllipse: { cx, cy, rx, ry },
       subjectBounds: sb,
       confidence,
-      notes: confidence < 0.4 ? ['Low vegetation signal — check and adjust the outline'] : [],
+      source: 'heuristic',
+      notes:  confidence < 0.4 ? ['Low vegetation signal — adjust the outline manually'] : [],
     }
   } catch {
     return null

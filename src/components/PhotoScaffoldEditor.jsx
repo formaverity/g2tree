@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft, ArrowRight, GitBranch, Layers, RefreshCw, Trash2, Sliders,
-  RotateCcw, CheckCircle2,
+  RotateCcw, CheckCircle2, Cpu,
 } from 'lucide-react'
 import useTreeSession from '../state/useTreeSession'
 import { analyzeTreePhotoScaffold, defaultTrunkAxis } from '../lib/photoScaffold'
@@ -517,6 +517,10 @@ export default function PhotoScaffoldEditor() {
     trunkCharacter,    setTrunkCharacter,
     calibrationPhotoIndex, setCalibrationPhotoIndex,
     annotations,       setAnnotations,
+    // Scale anchor handles — used as SAM point prompt
+    basePoint, dbhPoint,
+    mainPhotoId,
+    returnStep,
     setStep,
   } = useTreeSession()
 
@@ -546,7 +550,7 @@ export default function PhotoScaffoldEditor() {
   const [warnings,    setWarnings]    = useState([])
   const [firstPassStatus, setFirstPassStatus] = useState(null) // null | 'running' | 'done' | 'failed'
 
-  // ── First-pass analysis on mount ──────────────────────────────────────────
+  // ── Structure detection on mount (AI-first, heuristic fallback) ───────────
   useEffect(() => {
     const hasAnnotations =
       localOutline.length > 0 ||
@@ -556,13 +560,24 @@ export default function PhotoScaffoldEditor() {
 
     if (!photo || hasAnnotations) return
 
-    runFirstPass(photo.url)
+    runDetection(photo.url)
   }, [photo?.id])
 
-  function runFirstPass(imageUrl) {
+  function _trunkPromptPoint() {
+    // Use midpoint of base→dbh scale handles as the SAM point prompt
+    if (basePoint && dbhPoint) {
+      return {
+        x: (basePoint.x + dbhPoint.x) / 2,
+        y: (basePoint.y + dbhPoint.y) / 2,
+      }
+    }
+    return null
+  }
+
+  function runDetection(imageUrl) {
     if (!imageUrl) return
     setFirstPassStatus('running')
-    analyzeTreeImage(imageUrl)
+    analyzeTreeImage(imageUrl, _trunkPromptPoint())
       .then((result) => {
         if (!result) { setFirstPassStatus('failed'); return }
         setLocalOutline(result.treeOutline)
@@ -575,18 +590,18 @@ export default function PhotoScaffoldEditor() {
           trunkLine:       result.trunkLine,
           primaryBranches: result.primaryBranches,
         })
-        setFirstPassStatus('done')
+        setFirstPassStatus(result.source === 'sam' ? 'done-ai' : 'done')
       })
       .catch(() => setFirstPassStatus('failed'))
   }
 
-  function rerunFirstPass() {
+  function rerunDetection() {
     if (!photo) return
     setLocalOutline([])
     setLocalCrown([])
     setLocalTrunk([])
     setLocalBranches([])
-    runFirstPass(photo.url)
+    runDetection(photo.url)
   }
 
   function clearAnnotations() {
@@ -597,6 +612,9 @@ export default function PhotoScaffoldEditor() {
     setAnnotations({ treeOutline: [], crownOutline: [], trunkLine: [], primaryBranches: [] })
     setFirstPassStatus(null)
   }
+
+  // rerunFirstPass kept as alias so any existing references still work
+  const rerunFirstPass = rerunDetection
 
   // ── Persist annotation changes to session ─────────────────────────────────
   function syncAnnotations() {
@@ -717,17 +735,50 @@ export default function PhotoScaffoldEditor() {
     ?? (speciesAIResult?.scientific_name ? speciesAIResult.scientific_name : null)
     ?? null
 
+  const doneStep = returnStep ?? 'identify'
+
   return (
     <motion.div
-      className="panel panel-scaffold-editor"
-      initial={{ opacity: 0, y: 24 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -16 }}
+      className="scaffold-detail-root"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
     >
-      <div className="panel-body">
-        <h2 className="panel-title">Analyse + Correct</h2>
-        <p className="panel-desc">
-          Review the first-pass structure. Drag handles or add points to correct the outline before generating.
+      {/* ── Detail top bar ─────────────────────────────────────────────── */}
+      <div className="scaffold-detail-topbar">
+        <button className="scaffold-detail-back" onClick={() => setStep(doneStep)}>
+          <ArrowLeft size={16} />
+        </button>
+        <span className="scaffold-detail-title">Edit detection</span>
+        <div className="scaffold-detail-actions">
+          <button
+            className="scaffold-tool-btn"
+            onClick={rerunDetection}
+            disabled={!photo || firstPassStatus === 'running'}
+            title="Re-run structure detection"
+          >
+            <Cpu size={13} /> Re-run
+          </button>
+          <button
+            className="scaffold-tool-btn"
+            onClick={clearAnnotations}
+            disabled={firstPassStatus === 'running'}
+            title="Clear all annotations"
+          >
+            <Trash2 size={13} /> Clear
+          </button>
+          <button
+            className="scaffold-detail-done"
+            onClick={() => setStep(doneStep)}
+          >
+            Done <ArrowRight size={14} />
+          </button>
+        </div>
+      </div>
+
+      <div className="scaffold-detail-body">
+        <p className="scaffold-detail-desc">
+          Review detected structure. Drag handles to correct, then generate the clone.
         </p>
 
         {!hasPhotos ? (
@@ -745,11 +796,7 @@ export default function PhotoScaffoldEditor() {
                     className={`scaffold-photo-tab${calibrationPhotoIndex === i ? ' active' : ''}`}
                     onClick={() => {
                       setCalibrationPhotoIndex(i)
-                      setFirstPassStatus(null)
-                      setLocalOutline([])
-                      setLocalCrown([])
-                      setLocalTrunk([])
-                      setLocalBranches([])
+                      clearAnnotations()
                     }}
                   >
                     Photo {i + 1}
@@ -759,25 +806,28 @@ export default function PhotoScaffoldEditor() {
               </div>
             )}
 
-            {/* ── First-pass status banner ───────────────────────────── */}
+            {/* ── Detection status banner ────────────────────────────── */}
             {firstPassStatus === 'running' && (
               <div className="annot-first-pass annot-first-pass--running">
                 <RefreshCw size={12} className="spin" />
-                Analysing image structure…
+                Detecting structure…
+              </div>
+            )}
+            {firstPassStatus === 'done-ai' && (
+              <div className="annot-first-pass annot-first-pass--done">
+                <Cpu size={12} />
+                Detection complete — adjust the outline if needed.
               </div>
             )}
             {firstPassStatus === 'done' && (
               <div className="annot-first-pass annot-first-pass--done">
                 <CheckCircle2 size={12} />
-                First pass complete — adjust the outline if needed.
-                <button className="annot-rerun-btn" onClick={rerunFirstPass}>Rerun</button>
-                <button className="annot-rerun-btn" onClick={clearAnnotations}>Clear</button>
+                Detection complete — adjust the outline if needed.
               </div>
             )}
             {firstPassStatus === 'failed' && (
               <div className="annot-first-pass annot-first-pass--failed">
-                Image analysis unavailable — draw the outline manually.
-                <button className="annot-rerun-btn" onClick={rerunFirstPass}>Retry</button>
+                Detection failed — annotate manually or re-run.
               </div>
             )}
 
@@ -982,19 +1032,13 @@ export default function PhotoScaffoldEditor() {
 
         <SaveTreeButton />
 
-        <div className="panel-footer">
-          <button className="btn-back" onClick={() => setStep('review')}>
-            <ArrowLeft size={16} /> Review
-          </button>
-          {generated && (
-            <button className="btn-secondary" onClick={() => setStep('clone')}>
-              Clone <ArrowRight size={16} />
+        {generated && (
+          <div className="scaffold-proceed-row">
+            <button className="btn-next" onClick={() => setStep(doneStep)}>
+              Done <ArrowRight size={16} />
             </button>
-          )}
-          <button className="btn-next" onClick={() => setStep('identify')}>
-            Species <ArrowRight size={16} />
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </motion.div>
   )

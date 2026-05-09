@@ -4,24 +4,27 @@ import useTreeSession from '../state/useTreeSession'
 import { saveCurrentTree } from '../lib/treeRecords'
 import ConfirmLeaveModal from './ConfirmLeaveModal'
 
+// Primary five-step path shown in the nav indicator
 const STEPS = [
-  { id: 'capture',   label: 'Capture',   aliases: []              },
-  { id: 'review',    label: 'Review',    aliases: []              },
-  { id: 'metrics',   label: 'Metrics',   aliases: []              },
-  { id: 'benefits',  label: 'Benefits',  aliases: []              },
-  { id: 'identify',  label: 'Identify',  aliases: ['estimate']    },
-  { id: 'calibrate', label: 'Calibrate', aliases: []              },
-  { id: 'scaffold',  label: 'Scaffold',  aliases: []              },
-  { id: 'materials', label: 'Materials', aliases: []              },
-  { id: 'clone',     label: 'Clone',     aliases: ['preview']     },
-  { id: 'export',   label: 'Export',    aliases: []              },
-  { id: 'record',   label: 'Record',    aliases: []              },
+  { id: 'capture',  label: 'Capture',  aliases: []           },
+  { id: 'label',    label: 'Label',    aliases: []           },
+  { id: 'scale',    label: 'Scale',    aliases: []           },
+  { id: 'identify', label: 'Identify', aliases: ['estimate'] },
+  { id: 'clone',    label: 'Clone',    aliases: ['preview']  },
 ]
+
+// Steps not shown as dots (scaffold is a detail view; legacy steps folded into clone)
+const OFF_PATH_STEPS = new Set([
+  'scaffold', 'review', 'metrics', 'benefits', 'calibrate', 'materials', 'export', 'record', 'profile',
+])
 
 function resolveStepIndex(step) {
   const direct = STEPS.findIndex((s) => s.id === step)
   if (direct !== -1) return direct
-  return STEPS.findIndex((s) => s.aliases?.includes(step))
+  const aliased = STEPS.findIndex((s) => s.aliases?.includes(step))
+  if (aliased !== -1) return aliased
+  // Off-path steps sit visually at scale position
+  return OFF_PATH_STEPS.has(step) ? 2 : -1
 }
 
 export default function StepHeader({ step }) {

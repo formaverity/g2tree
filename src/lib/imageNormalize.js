@@ -1,3 +1,34 @@
+/**
+ * General-purpose capture normalizer — used by BulkCaptureStep before photos
+ * enter the session. Targets 1600px long edge at 85% quality.
+ *
+ * @param {File|Blob} file
+ * @returns {Promise<{ blob: Blob, url: string, width: number, height: number }>}
+ */
+export async function normalizeImageForCapture(file) {
+  const MAX_DIM  = 1600
+  const QUALITY  = 0.85
+
+  const bitmap = await createImageBitmap(file)
+  let { width, height } = bitmap
+  const longest = Math.max(width, height)
+  if (longest > MAX_DIM) {
+    const scale = MAX_DIM / longest
+    width  = Math.round(width  * scale)
+    height = Math.round(height * scale)
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width  = width
+  canvas.height = height
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height)
+  bitmap.close()
+
+  const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', QUALITY))
+  const url  = URL.createObjectURL(blob)
+  return { blob, url, width, height }
+}
+
 const HEIC_MSG =
   'HEIC is not currently supported by Pl@ntNet. Please use browser camera capture or convert to JPG/PNG.'
 

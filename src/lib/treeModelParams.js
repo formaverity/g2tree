@@ -31,6 +31,87 @@ const RE_CONIFER   = /\b(pine|spruce|fir|cedar|juniper|hemlock|larch|cypress|red
 const RE_PALM      = /\b(palm|palmetto)\b/i
 const RE_DECIDUOUS = /\b(oak|maple|beech|birch|elm|ash|poplar|cherry|sycamore|linden|basswood|sweetgum|tupelo|walnut|chestnut|hornbeam|hazel|alder|locust|redbud|magnolia)\b/i
 
+// ── Typical height ranges by genus (ft) ─────────────────────────────────────
+// Used for morphological re-ranking of PlantNet candidates.
+const GENUS_HEIGHT_RANGES = {
+  // Deciduous
+  Acer:         { min: 15,  max: 80  },
+  Quercus:      { min: 40,  max: 100 },
+  Fagus:        { min: 50,  max: 100 },
+  Betula:       { min: 40,  max: 80  },
+  Platanus:     { min: 70,  max: 100 },
+  Ulmus:        { min: 60,  max: 100 },
+  Tilia:        { min: 60,  max: 80  },
+  Fraxinus:     { min: 50,  max: 80  },
+  Populus:      { min: 50,  max: 100 },
+  Prunus:       { min: 15,  max: 50  },
+  Liquidambar:  { min: 60,  max: 80  },
+  Liriodendron: { min: 60,  max: 120 },
+  Nyssa:        { min: 30,  max: 60  },
+  Carpinus:     { min: 20,  max: 40  },
+  Corylus:      { min: 10,  max: 30  },
+  Alnus:        { min: 40,  max: 70  },
+  Juglans:      { min: 50,  max: 75  },
+  Castanea:     { min: 50,  max: 100 },
+  Gleditsia:    { min: 30,  max: 70  },
+  Robinia:      { min: 40,  max: 80  },
+  Celtis:       { min: 40,  max: 60  },
+  Magnolia:     { min: 20,  max: 80  },
+  Cercis:       { min: 20,  max: 30  },
+  Morus:        { min: 30,  max: 60  },
+  // Conifers
+  Pinus:        { min: 40,  max: 200 },
+  Picea:        { min: 40,  max: 150 },
+  Abies:        { min: 60,  max: 200 },
+  Thuja:        { min: 10,  max: 60  },
+  Juniperus:    { min: 10,  max: 50  },
+  Tsuga:        { min: 60,  max: 150 },
+  Cedrus:       { min: 40,  max: 100 },
+  Larix:        { min: 40,  max: 100 },
+  Sequoia:      { min: 200, max: 380 },
+  Sequoiadendron:{ min: 160, max: 310 },
+  Pseudotsuga:  { min: 130, max: 250 },
+  Chamaecyparis:{ min: 20,  max: 70  },
+  Cupressus:    { min: 40,  max: 80  },
+  Taxus:        { min: 10,  max: 60  },
+  Cryptomeria:  { min: 70,  max: 130 },
+  Calocedrus:   { min: 60,  max: 130 },
+  Metasequoia:  { min: 70,  max: 130 },
+  // Palms
+  Phoenix:      { min: 20,  max: 80  },
+  Washingtonia: { min: 50,  max: 100 },
+  Sabal:        { min: 40,  max: 65  },
+  Chamaerops:   { min: 6,   max: 15  },
+  Trachycarpus: { min: 10,  max: 40  },
+  Syagrus:      { min: 20,  max: 50  },
+  Roystonea:    { min: 50,  max: 100 },
+  Livistona:    { min: 40,  max: 100 },
+  Cocos:        { min: 60,  max: 100 },
+}
+
+/**
+ * Score how well a measured tree height fits a species' typical range.
+ * Returns 0–1 (1 = within range, <1 = outside, 0 = implausible).
+ *
+ * @param {string} sciName  — PlantNet scientific name (with or without author)
+ * @param {number} heightFt — measured height from scale anchor step
+ */
+export function morphologicalScore(sciName, heightFt) {
+  if (!sciName || !heightFt) return 0.5  // neutral if no data
+  const genus = sciName.trim().split(/\s+/)[0]
+  const range = GENUS_HEIGHT_RANGES[genus]
+  if (!range) return 0.5  // unknown genus — neutral
+
+  if (heightFt >= range.min && heightFt <= range.max) return 1.0
+
+  // Penalty for being outside the range — distance in range units
+  const tolerance = (range.max - range.min) * 0.5
+  const distance  = heightFt < range.min
+    ? (range.min - heightFt)
+    : (heightFt - range.max)
+  return Math.max(0, 1 - distance / Math.max(tolerance, 10))
+}
+
 // ── Public helpers ────────────────────────────────────────────────────────────
 
 /**

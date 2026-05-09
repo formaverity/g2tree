@@ -66,6 +66,45 @@ const useTreeSession = create((set, get) => ({
   session: null,
   setSession: (session) => set({ session }),
 
+  // Scale anchor handles (normalized 0-1 relative to main photo)
+  basePoint: null,   // { x, y }
+  dbhPoint:  null,   // { x, y }
+  topPoint:  null,   // { x, y }
+  estimatedHeightFt:  null,
+  scaleFactorPxPerFt: null,
+
+  setScaleHandle: (handle, point) =>
+    set({ [handle + 'Point']: point, hasUnsavedChanges: true, isSaved: false }),
+  setEstimatedHeight: (value, unit = 'ft') => {
+    const ft = unit === 'm' ? value * 3.28084 : value
+    set({ estimatedHeightFt: ft, hasUnsavedChanges: true, isSaved: false })
+  },
+  setScaleFactor: (pxPerFt) => set({ scaleFactorPxPerFt: pxPerFt }),
+
+  // v2 AI detection results
+  detectedHeightFt:   null,   // from Depth Anything V2
+  depthAtDbh:         null,   // raw depth value at DBH handle position
+  samMaskCache:       null,   // { mask: Float32Array, width, height } — reused by ScaleAnchorStep
+  depthMapCache:      null,   // { data: Float32Array, width, height }
+  detectionConfidence: null,  // 0–1 composite score; gates scaffold skip
+
+  setDetectedHeight: (ft) => set({ detectedHeightFt: ft }),
+  acceptDetectedHeight: () => {
+    const detected = get().detectedHeightFt
+    if (detected != null) set({ estimatedHeightFt: detected, hasUnsavedChanges: true, isSaved: false })
+  },
+  setSamMask:            (mask)  => set({ samMaskCache: mask }),
+  setDepthMap:           (map)   => set({ depthMapCache: map }),
+  setDetectionConfidence:(score) => set({ detectionConfidence: score }),
+
+  // Primary photo used for scaffold and scale anchoring
+  mainPhotoId: null,
+  setMainPhoto: (id) => {
+    const photos  = get().photos
+    const idx     = photos.findIndex((p) => p.id === id)
+    set({ mainPhotoId: id, calibrationPhotoIndex: idx >= 0 ? idx : 0 })
+  },
+
   // View routing: 'home' | 'workflow' | 'finishedClone'
   view: 'home',
   setView: (view) => set({ view }),
@@ -107,14 +146,28 @@ const useTreeSession = create((set, get) => ({
   // Clear all tree data and return to blank capture state.
   resetSession: () => {
     const { photos, textureSamples, scanState } = get()
-    photos.forEach((p) => { if (p.url?.startsWith('blob:')) URL.revokeObjectURL(p.url) })
+    photos.forEach((p) => {
+      if (p.url?.startsWith('blob:'))      URL.revokeObjectURL(p.url)
+      if (p.thumbUrl?.startsWith('blob:')) URL.revokeObjectURL(p.thumbUrl)
+    })
     Object.values(textureSamples).forEach((s) => {
       if (s?.url?.startsWith('blob:')) URL.revokeObjectURL(s.url)
     })
     revokeScanUrls(scanState)
     set({
       photos:              [],
-      scanState:           { ...DEFAULT_SCAN_STATE },
+      mainPhotoId:         null,
+      basePoint:           null,
+      dbhPoint:            null,
+      topPoint:            null,
+      estimatedHeightFt:    null,
+      scaleFactorPxPerFt:   null,
+      detectedHeightFt:     null,
+      depthAtDbh:           null,
+      samMaskCache:         null,
+      depthMapCache:        null,
+      detectionConfidence:  null,
+      scanState:            { ...DEFAULT_SCAN_STATE },
       landmarks:           { ...DEFAULT_LANDMARKS },
       showScaleRef:        false,
       scaleRealWorldDist:  1.0,
@@ -154,6 +207,12 @@ const useTreeSession = create((set, get) => ({
   // Restore all session state from a loaded tree record in one atomic update.
   restoreSession: ({
     photos               = [],
+    mainPhotoId          = null,
+    basePoint            = null,
+    dbhPoint             = null,
+    topPoint             = null,
+    estimatedHeightFt    = null,
+    scaleFactorPxPerFt   = null,
     estimates            = null,
     landmarks,
     userHints,
@@ -175,8 +234,23 @@ const useTreeSession = create((set, get) => ({
     annotations,
     id,
   }) => {
+    // Normalise legacy organLabel (string) → organLabels (array)
+    const normPhotos = photos.map((p) => {
+      if (p.organLabels) return p
+      return { ...p, organLabels: p.organLabel ? [p.organLabel] : [] }
+    })
+    const derivedMainId = mainPhotoId
+      ?? normPhotos.find((p) => p.organLabels?.includes('Tree'))?.id
+      ?? normPhotos[0]?.id
+      ?? null
     set({
-      photos,
+      photos: normPhotos,
+      mainPhotoId:          derivedMainId,
+      basePoint,
+      dbhPoint,
+      topPoint,
+      estimatedHeightFt,
+      scaleFactorPxPerFt,
       estimates,
       landmarks:            landmarks         ?? { ...DEFAULT_LANDMARKS },
       userHints:            userHints         ?? { ...DEFAULT_USER_HINTS },
@@ -215,25 +289,72 @@ const useTreeSession = create((set, get) => ({
     set({ scanState: { ...DEFAULT_SCAN_STATE } })
   },
 
-  // Photos
+  // Photos — shape: { id, url, file, exif, organLabels, exifGps, thumbUrl, normalizedBlob }
+  // organLabels is a string[] — a photo can have multiple tags (e.g. ['Bark', 'Leaves/Fruit'])
   photos: [],
-  addPhotos: (files) => {
-    const newPhotos = files.map((file) => ({
-      id:   crypto.randomUUID(),
-      url:  URL.createObjectURL(file),
-      file,
-      exif: null,
-    }))
-    set((s) => ({ photos: [...s.photos, ...newPhotos], hasUnsavedChanges: true, isSaved: false }))
+  addPhotos: (inputs) => {
+    const current = get().photos
+    const newPhotos = inputs.map((input) => {
+      if (input instanceof File || input instanceof Blob) {
+        return {
+          id:             crypto.randomUUID(),
+          url:            URL.createObjectURL(input),
+          file:           input,
+          exif:           null,
+          organLabels:    [],   // user tags manually in PhotoLabelGallery
+          exifGps:        null,
+          thumbUrl:       null,
+          normalizedBlob: null,
+        }
+      }
+      // Pre-built photo object — normalise to organLabels array
+      const { organLabel, organLabels, ...rest } = input
+      return {
+        exifGps:        null,
+        thumbUrl:       null,
+        normalizedBlob: null,
+        ...rest,
+        // Accept either legacy organLabel string or new organLabels array
+        organLabels: organLabels ?? (organLabel ? [organLabel] : []),
+      }
+    })
+    const next   = [...current, ...newPhotos]
+    const mainId = get().mainPhotoId
+    if (!mainId) {
+      const main = next.find((p) => p.organLabels?.includes('Tree')) ?? next[0]
+      set({ photos: next, mainPhotoId: main?.id ?? null, hasUnsavedChanges: true, isSaved: false })
+    } else {
+      set({ photos: next, hasUnsavedChanges: true, isSaved: false })
+    }
   },
   setPhotos: (photos) => set({ photos }),
   removePhoto: (id) => {
     const photo = get().photos.find((p) => p.id === id)
     if (photo?.url?.startsWith('blob:')) URL.revokeObjectURL(photo.url)
-    set((s) => ({ photos: s.photos.filter((p) => p.id !== id), hasUnsavedChanges: true, isSaved: false }))
+    if (photo?.thumbUrl?.startsWith('blob:')) URL.revokeObjectURL(photo.thumbUrl)
+    set((s) => {
+      const next   = s.photos.filter((p) => p.id !== id)
+      const mainId = s.mainPhotoId === id
+        ? (next.find((p) => p.organLabels?.includes('Tree')) ?? next[0])?.id ?? null
+        : s.mainPhotoId
+      return { photos: next, mainPhotoId: mainId, hasUnsavedChanges: true, isSaved: false }
+    })
   },
   setPhotoExif: (id, exif) =>
     set((s) => ({ photos: s.photos.map((p) => (p.id === id ? { ...p, exif } : p)) })),
+  // Toggle a single label on/off for a photo (multi-select model)
+  togglePhotoLabel: (id, label) =>
+    set((s) => {
+      const photos = s.photos.map((p) => {
+        if (p.id !== id) return p
+        const prev   = p.organLabels ?? []
+        const next   = prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
+        return { ...p, organLabels: next }
+      })
+      const newMain = photos.find((p) => p.organLabels?.includes('Tree'))?.id
+        ?? photos[0]?.id ?? null
+      return { photos, mainPhotoId: newMain, hasUnsavedChanges: true, isSaved: false }
+    }),
 
   // Landmarks (normalized 0-1 coords relative to first image)
   landmarks: { ...DEFAULT_LANDMARKS },
