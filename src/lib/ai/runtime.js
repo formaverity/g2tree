@@ -82,22 +82,38 @@ export async function cachedSession(modelUrl, opts = {}) {
 // SAM model URLs — same as sam.js uses
 const SAM_ENCODER = '/models/sam/encoder.onnx'
 const SAM_DECODER = '/models/sam/decoder.onnx'
-const DEPTH_MODEL  = '/models/depth/model.onnx'
+// Must match the path used by depthEstimation.js
+const DEPTH_MODEL  = '/models/depth-anything-v2-small/model.onnx'
 
 let _warmupDone = false
 let _warmupPromise = null
 
-/**
- * Pre-load ONNX sessions for SAM and Depth models in the background.
- * Safe to call multiple times — subsequent calls are no-ops.
- */
+// Per-model warmup status — readable by dev UI without importing depthEstimation
+export const warmupStatus = { sam: 'idle', depth: 'idle' }
+
 export function warmup() {
   if (_warmupDone || _warmupPromise) return
-  _warmupPromise = Promise.allSettled([
+
+  warmupStatus.sam   = 'loading'
+  warmupStatus.depth = 'loading'
+
+  const samP = Promise.allSettled([
     cachedSession(SAM_ENCODER),
     cachedSession(SAM_DECODER),
-    cachedSession(DEPTH_MODEL),
-  ]).then(() => { _warmupDone = true; _warmupPromise = null })
+  ]).then(([enc, dec]) => {
+    warmupStatus.sam = (enc.status === 'fulfilled' && dec.status === 'fulfilled') ? 'loaded' : 'failed'
+    if (warmupStatus.sam === 'failed') {
+      console.error('[sam load]', enc.reason ?? dec.reason)
+    }
+  })
+
+  const depthP = cachedSession(DEPTH_MODEL).then(
+    ()  => { warmupStatus.depth = 'loaded' },
+    (e) => { warmupStatus.depth = 'failed'; console.error('[depth load]', e) },
+  )
+
+  _warmupPromise = Promise.allSettled([samP, depthP])
+    .then(() => { _warmupDone = true; _warmupPromise = null })
 }
 
 /** True once warmup sessions have all settled (success or failure). */

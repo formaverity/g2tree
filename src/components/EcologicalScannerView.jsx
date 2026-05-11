@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, Suspense } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import { ArrowLeft, ArrowRight, RotateCcw } from 'lucide-react'
+import { ArrowLeft, ArrowRight, RotateCcw, X } from 'lucide-react'
 import * as THREE from 'three'
 import useTreeSession from '../state/useTreeSession'
 import { photoToProceduralParams } from '../lib/photoToProceduralParams'
@@ -11,6 +11,8 @@ import { loadTextureSafe } from '../lib/threeTextureUtils'
 import { ProceduralTree } from './TreePreview'
 import PreviewErrorBoundary from './PreviewErrorBoundary'
 import SaveTreeButton from './SaveTreeButton'
+import { estimateDepth, isDepthUnavailable } from '../lib/depthEstimation'
+import { warmupStatus } from '../lib/ai/runtime'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -598,9 +600,11 @@ function ModeInfo({ mode, metrics, species, maskData, visionDepth }) {
 
 export default function EcologicalScannerView() {
   const {
-    scanState, scaffoldGeometry, textureSamples,
+    scanState, setScanState, scaffoldGeometry, textureSamples,
     estimates, treeStructureHints, speciesAIResult, userHints,
     setStep, setReturnStep,
+    photos, mainPhotoId,
+    startNewTree, setView,
   } = useTreeSession()
 
   function goToScaffold() {
@@ -611,10 +615,16 @@ export default function EcologicalScannerView() {
   const [modeIdx, setModeIdx] = useState(0)
   const [maskData, setMaskData]   = useState(null)
   const [imgAspect, setImgAspect] = useState(4 / 3)
+  const [depthStatus, setDepthStatus] = useState('idle')   // 'idle'|'loading'|'done'|'failed'
+  const [depthBannerDismissed, setDepthBannerDismissed] = useState(false)
 
   const mode = MODES[modeIdx]
 
-  const primaryUrl = scanState?.primaryImage?.url ?? null
+  // Fall back to photos[] for the new bulk-capture flow which never populates scanState.primaryImage
+  const primaryUrl = scanState?.primaryImage?.url
+    ?? photos.find((p) => p.id === mainPhotoId)?.url
+    ?? photos[0]?.url
+    ?? null
 
   // Compute 3D params from scan data (live-reactive to metric changes)
   const params = useMemo(() => {
@@ -641,6 +651,22 @@ export default function EcologicalScannerView() {
     generateMaskDataUrl(primaryUrl).then(setMaskData)
   }, [mode, primaryUrl, maskData])
 
+  // Run depth estimation lazily when we have a photo but no depth data yet.
+  // This handles the new bulk-capture flow where CaptureWizard never runs.
+  useEffect(() => {
+    if (!primaryUrl || scanState?.visionDepth || isDepthUnavailable()) return
+    if (depthStatus !== 'idle') return
+    setDepthStatus('loading')
+    estimateDepth(primaryUrl)
+      .then(({ grid }) => {
+        // grid is GRID_SIZE×GRID_SIZE (32×32); flatten for the flat-indexed renderer
+        const gSize = grid.length
+        setScanState({ visionDepth: { grid: grid.flat(), width: gSize, height: gSize } })
+        setDepthStatus('done')
+      })
+      .catch(() => setDepthStatus('failed'))
+  }, [primaryUrl, scanState?.visionDepth, depthStatus, setScanState])
+
   // CSS class for photo brightness per mode
   const photoClass = `esv-photo esv-photo--${mode.toLowerCase()}`
 
@@ -648,6 +674,50 @@ export default function EcologicalScannerView() {
   const vDepth  = scanState?.visionDepth
   const metrics = scanState?.estimatedMetrics
   const species = scanState?.speciesResult
+
+  // ── Recovery: session has no photos ────────────────────────────────────────
+  if (photos.length === 0) {
+    return (
+      <motion.div
+        className="panel panel-scanner"
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -16 }}
+      >
+        <div className="panel-body">
+          <div className="esv-recovery-card">
+            <div className="esv-recovery-icon">
+              <span className="esv-placeholder-dot" />
+            </div>
+            <h3 className="esv-recovery-title">This session has no photos yet</h3>
+            <p className="esv-recovery-body">
+              You may have arrived here from a stale link or a saved entry that
+              didn&rsquo;t load fully. Start fresh or open a saved tree to continue.
+            </p>
+            <div className="esv-recovery-actions">
+              <button
+                className="btn-next"
+                onClick={() => startNewTree()}
+              >
+                Start a new tree
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => setView('home')}
+              >
+                Open saved trees
+              </button>
+            </div>
+          </div>
+          <div className="panel-footer">
+            <button className="btn-back" onClick={() => setStep('identify')}>
+              <ArrowLeft size={16} /> Back
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    )
+  }
 
   return (
     <motion.div
@@ -731,6 +801,30 @@ export default function EcologicalScannerView() {
         </div>
 
         <SaveTreeButton />
+
+        {/* Depth unavailable banner — dismissable, non-blocking */}
+        {depthStatus === 'failed' && !depthBannerDismissed && (
+          <div className="esv-depth-banner">
+            <span>Depth detection unavailable — using estimated height only.</span>
+            <button
+              className="esv-depth-banner-dismiss"
+              onClick={() => setDepthBannerDismissed(true)}
+              aria-label="Dismiss"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        )}
+
+        {/* Dev-mode AI model status */}
+        {import.meta.env.DEV && (
+          <div className="esv-ai-status">
+            <span className={`esv-ai-dot esv-ai-dot--${warmupStatus.depth}`} />
+            <span className="esv-ai-label">Depth: {depthStatus === 'loading' ? 'loading…' : warmupStatus.depth}</span>
+            <span className={`esv-ai-dot esv-ai-dot--${warmupStatus.sam}`} />
+            <span className="esv-ai-label">SAM: {warmupStatus.sam}</span>
+          </div>
+        )}
 
         <div className="panel-footer">
           <button className="btn-back" onClick={() => setStep('identify')}>

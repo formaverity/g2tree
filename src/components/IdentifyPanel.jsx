@@ -319,7 +319,7 @@ export default function IdentifyPanel() {
           <button className="btn-back" onClick={() => setStep('scale')}>
             <ArrowLeft size={16} /> Back
           </button>
-          <button className="btn-next" onClick={() => setStep('clone')}>
+          <button className="btn-next" onClick={() => setStep('clone')} disabled={photos.length === 0}>
             Generate Clone <ArrowRight size={16} />
           </button>
         </div>

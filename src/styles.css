@@ -4415,6 +4415,118 @@ button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
   line-height: 1.5;
 }
 
+/* ── Recovery card (no photos in session) ────────────────────────────────── */
+
+.esv-recovery-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 20px 24px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 14px;
+  text-align: center;
+  margin: 16px 0 8px;
+}
+
+.esv-recovery-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+}
+
+.esv-recovery-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #e8f5e9);
+  margin: 0;
+}
+
+.esv-recovery-body {
+  font-size: 13px;
+  color: var(--text-dim, rgba(232,245,233,0.55));
+  line-height: 1.55;
+  margin: 0;
+  padding: 0 4px;
+}
+
+.esv-recovery-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 280px;
+  margin-top: 4px;
+}
+
+/* ── Depth unavailable banner ────────────────────────────────────────────── */
+
+.esv-depth-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255,200,80,0.10);
+  border: 1px solid rgba(255,200,80,0.22);
+  border-radius: 8px;
+  font-size: 12px;
+  color: rgba(255,210,100,0.85);
+  margin: 4px 0;
+}
+
+.esv-depth-banner span { flex: 1; }
+
+.esv-depth-banner-dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.esv-depth-banner-dismiss:hover { opacity: 1; }
+
+/* ── Dev-mode AI status widget ───────────────────────────────────────────── */
+
+.esv-ai-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(0,0,0,0.35);
+  border-radius: 6px;
+  font-size: 10px;
+  color: rgba(255,255,255,0.45);
+  margin: 2px 0 4px;
+}
+
+.esv-ai-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.esv-ai-dot--idle    { background: rgba(255,255,255,0.25); }
+.esv-ai-dot--loading { background: rgba(255,200,80,0.80);  animation: esv-ai-pulse 1s ease-in-out infinite; }
+.esv-ai-dot--loaded  { background: rgba(100,220,120,0.90); }
+.esv-ai-dot--failed  { background: rgba(255,100,80,0.90);  }
+
+@keyframes esv-ai-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+.esv-ai-label { margin-right: 4px; }
+
 /* ── Mask overlay canvas ─────────────────────────────────────────────────── */
 
 .esv-mask-canvas {

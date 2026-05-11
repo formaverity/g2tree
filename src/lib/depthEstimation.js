@@ -50,6 +50,8 @@ export async function loadDepthModel() {
 
   _configureOrt()
 
+  console.info('[depth load] fetching', MODEL_URL)
+
   _loadPromise = ort.InferenceSession
     .create(MODEL_URL, {
       executionProviders:    ['wasm'],
@@ -58,11 +60,13 @@ export async function loadDepthModel() {
     .then((session) => {
       _session     = session
       _loadPromise = null
+      console.info('[depth load] session ready')
       return session
     })
     .catch((err) => {
       _unavailable = true
       _loadPromise = null
+      console.error('[depth load] failed:', err)
       throw err
     })
 

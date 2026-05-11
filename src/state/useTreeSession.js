@@ -112,7 +112,14 @@ const useTreeSession = create((set, get) => ({
   // Step management
   step: 'capture',
   returnStep: 'capture',
-  setStep: (step) => set({ step }),
+  setStep: (step) => {
+    if (step === 'clone' && get().photos.length === 0) {
+      console.warn('[G2Tree] setStep("clone") blocked — no photos in session; routing to capture')
+      set({ step: 'capture' })
+      return
+    }
+    set({ step })
+  },
   setReturnStep: (step) => set({ returnStep: step }),
 
   // Save lifecycle
